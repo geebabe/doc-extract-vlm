@@ -1,0 +1,7 @@
+.env
+vllm_helper.py
+paddleocr_sdk_vi.ipynb
+.venv
+__pycache__
+.git
+*.pyc
