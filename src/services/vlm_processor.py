@@ -5,8 +5,8 @@ import io
 import numpy as np
 from PIL import Image
 from typing import Optional, Any
+from pydantic import BaseModel
 from openai import OpenAI
-from src.schemas.invoice import InvoiceExtraction
 from src.core.logger import logger
 
 SYSTEM_PROMPT = """You are an advanced OCR and document understanding system. Your goal is to extract structured information from the provided document image with high precision.
@@ -74,7 +74,7 @@ class VLLMDocumentProcessor:
 
         return "\n".join(ocr_rows)
 
-    def process(self, image_source: str) -> Optional[dict]:
+    def process(self, image_source: str, schema_class: type[BaseModel]) -> Optional[dict]:
         try:
             if image_source.startswith("http"):
                 img = Image.open(requests.get(image_source, stream=True, timeout=10).raw).convert("RGB")
@@ -87,8 +87,8 @@ class VLLMDocumentProcessor:
         logger.info("Running PaddleOCR...")
         ocr_context = self.run_paddle_ocr_normalized(img)
         
-        invoice_schema = InvoiceExtraction.model_json_schema()
-        schema_str = json.dumps(invoice_schema, indent=2)
+        schema_dict = schema_class.model_json_schema()
+        schema_str = json.dumps(schema_dict, indent=2)
         full_system_prompt = SYSTEM_PROMPT.format(
             ocr_context=ocr_context, 
             schema_str=schema_str
@@ -117,7 +117,7 @@ class VLLMDocumentProcessor:
                         ]
                     }
                 ],
-                response_format=InvoiceExtraction,
+                response_format=schema_class,
             )
             
             extraction = response.choices[0].message.parsed
