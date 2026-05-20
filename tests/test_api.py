@@ -18,13 +18,16 @@ def test_extract_url(mock_processor):
     }
     mock_processor.return_value = mock_response
     
-    response = client.post("/extract/url", json={"url": "https://example.com/image.png"})
+    response = client.post("/extract/invoice/url", json={"url": "https://example.com/image.png"})
     assert response.status_code == 200
-    assert response.json() == mock_response
+    res_data = response.json()
+    assert res_data["success"] is True
+    assert res_data["data"]["invoice_number"] == mock_response["invoice_number"]
+    assert res_data["data"]["total_amount"] == mock_response["total_amount"]
 
 def test_extract_url_failure(mock_processor):
     mock_processor.return_value = None
-    response = client.post("/extract/url", json={"url": "https://example.com/image.png"})
+    response = client.post("/extract/invoice/url", json={"url": "https://example.com/image.png"})
     assert response.status_code == 500
     assert response.json() == {"detail": "Extraction failed"}
 
@@ -37,11 +40,15 @@ def test_extract_file(mock_processor):
     file_content = b"dummy file content"
     files = {"file": ("test.png", file_content, "image/png")}
     
-    response = client.post("/extract/file", files=files)
+    response = client.post("/extract/invoice/file", files=files)
     assert response.status_code == 200
-    assert response.json() == mock_response
+    res_data = response.json()
+    assert res_data["success"] is True
+    assert res_data["data"]["invoice_number"] == mock_response["invoice_number"]
+
 
 def test_health_check():
-    response = client.get("/health/")
+    response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+

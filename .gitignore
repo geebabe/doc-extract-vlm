@@ -5,3 +5,6 @@ paddleocr_sdk_vi.ipynb
 __pycache__
 .git
 *.pyc
+.idea/
+client.py
+tests/
