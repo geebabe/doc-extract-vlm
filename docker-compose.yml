@@ -1,18 +1,40 @@
 version: '3.8'
 
 services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-service
+    ports:
+      - "8001:8001"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      --model Qwen/Qwen3-VL-2B-Instruct
+      --port 8001
+      --trust-remote-code
+      --max-model-len 32768
+
   ocr-api:
     build: .
     container_name: ocr-service
     ports:
       - "8000:8000"
+    depends_on:
+      - vllm
     env_file:
       - .env
-    # Bỏ comment cụm dưới đây nếu server của bạn có GPU và đã cài đặt NVIDIA Container Toolkit:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
