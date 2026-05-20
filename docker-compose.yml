@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  ocr-api:
+    build: .
+    container_name: ocr-service
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # Bỏ comment cụm dưới đây nếu server của bạn có GPU và đã cài đặt NVIDIA Container Toolkit:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
