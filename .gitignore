@@ -8,3 +8,7 @@ __pycache__
 .idea/
 client.py
 tests/
+data/
+client.py
+inference.py
+sample_images/

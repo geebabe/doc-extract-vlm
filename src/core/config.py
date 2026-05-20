@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import Optional
 
 class Settings(BaseSettings):
@@ -13,6 +14,13 @@ class Settings(BaseSettings):
     OCR_USE_DOC_UNWARPING: bool = False
     OCR_USE_TEXTLINE_ORIENTATION: bool = False
     OCR_TEXT_REC_SCORE_THRESH: float = 0.5
+    
+    @field_validator("OCR_TEXT_REC_SCORE_THRESH", mode="before")
+    @classmethod
+    def clean_float(cls, v):
+        if isinstance(v, str):
+            return v.strip("'\"")
+        return v
     
     class Config:
         env_file = ".env"
