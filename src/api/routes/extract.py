@@ -16,7 +16,8 @@ from src.core.logger import logger
 router = APIRouter()
 
 async def _process_file(file: UploadFile, processor: VLLMDocumentProcessor, schema_class: Type[BaseModel]):
-    temp_filename = f"temp_{uuid.uuid4()}_{file.filename}"
+    safe_filename = os.path.basename(file.filename)
+    temp_filename = f"temp_{uuid.uuid4()}_{safe_filename}"
     with open(temp_filename, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
