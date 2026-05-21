@@ -5,7 +5,7 @@ from typing import Optional
 class Settings(BaseSettings):
     PROJECT_NAME: str = "OCR API"
     VLLM_BASE_URL: str = "https://8000-01kqrdgejr2179p8rc37ev5p08.cloudspaces.litng.ai/v1"
-    VLLM_MODEL_NAME: str = "Qwen/Qwen3-VL-2B-Instruct"
+    VLLM_MODEL_NAME: str = "5CD-AI/Vintern-1B-v3_5"
     VLLM_API_KEY: str = "none"
     
     OCR_LANG: str = "vi"
