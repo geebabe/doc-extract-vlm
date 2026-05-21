@@ -12,3 +12,4 @@ data/
 client.py
 inference.py
 sample_images/
+.DS_Store
