@@ -10,11 +10,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - VLLM_BASE_URL=http://vintern-model:8000/v1
-      - VLLM_MODEL_NAME=${MODEL_ID:-5CD-AI/Vintern-1B-v3_5}
+      - VLLM_BASE_URL=http://qwen-model:8000/v1
+      - VLLM_MODEL_NAME=${MODEL_ID:-Qwen/Qwen3-VL-2B-Instruct}
       - VLLM_API_KEY=none
     depends_on:
-      vintern-model:
+      qwen-model:
         condition: service_healthy
     deploy:
       resources:
@@ -26,19 +26,19 @@ services:
     networks:
       - ocr-network
 
-  vintern-model:
+  qwen-model:
     image: vllm/vllm-openai:latest
-    container_name: vintern-model-service
+    container_name: qwen-model-service
     restart: unless-stopped
     environment:
       - HF_TOKEN
-      - MODEL_ID=${MODEL_ID:-5CD-AI/Vintern-1B-v3_5}
+      - MODEL_ID=${MODEL_ID:-Qwen/Qwen3-VL-2B-Instruct}
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
         pip install sentencepiece --quiet &&
         python -m vllm.entrypoints.openai.api_server \
-          --model ${MODEL_ID:-5CD-AI/Vintern-1B-v3_5} \
+          --model ${MODEL_ID:-Qwen/Qwen3-VL-2B-Instruct} \
           --max-model-len 8192 \
           --max-num-batched-tokens 8192 \
           --gpu-memory-utilization 0.80 \
