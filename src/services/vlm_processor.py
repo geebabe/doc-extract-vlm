@@ -1,12 +1,14 @@
 import json
 import base64
-import requests
 import io
 import numpy as np
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from typing import Optional, Any
 from pydantic import BaseModel
-from openai import OpenAI
+from openai import AsyncOpenAI
+import httpx
+import asyncio
+from fastapi import HTTPException
 from src.core.logger import logger
 
 SYSTEM_PROMPT = """You are an advanced OCR and document understanding system. Your goal is to extract structured information from the provided document image with high precision.
@@ -26,23 +28,25 @@ SYSTEM_PROMPT = """You are an advanced OCR and document understanding system. Yo
 
 class VLLMDocumentProcessor:
     def __init__(self, base_url: str, model_name: str, api_key: str, ocr_engine: Any):
-        self.client = OpenAI(base_url=base_url, api_key=api_key)
+        self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
         self.ocr_engine = ocr_engine
+        self.http_client = httpx.AsyncClient(timeout=10.0)
 
     def encode_image_base64(self, image: Image.Image) -> str:
         buffered = io.BytesIO()
         image.save(buffered, format="JPEG")
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-    def run_paddle_ocr_normalized(self, image: Image.Image) -> str:
+    async def run_paddle_ocr_normalized(self, image: Image.Image) -> str:
         if self.ocr_engine is None:
             return "OCR engine not initialized."
             
         img_w, img_h = image.size
         img_np = np.array(image)
         
-        results = self.ocr_engine.predict(img_np)
+        # Offload CPU-bound inference to thread pool
+        results = await asyncio.to_thread(self.ocr_engine.predict, img_np)
         
         if not results or not results[0]:
             return "Không tìm thấy văn bản nào."
@@ -74,33 +78,49 @@ class VLLMDocumentProcessor:
 
         return "\n".join(ocr_rows)
 
-    def process(self, image_source: str, schema_class: type[BaseModel]) -> Optional[dict]:
+    async def process(self, image_source: str, schema_class: type[BaseModel]) -> Optional[dict]:
+        img = None
         try:
             if image_source.startswith("http"):
-                img = Image.open(requests.get(image_source, stream=True, timeout=10).raw).convert("RGB")
+                response = await self.http_client.get(image_source)
+                response.raise_for_status()
+                img = Image.open(io.BytesIO(response.content))
+                img = img.convert("RGB")
             else:
-                img = Image.open(image_source).convert("RGB")
+                img = await asyncio.to_thread(Image.open, image_source)
+                img = img.convert("RGB")
+            
+            logger.info("Running PaddleOCR...")
+            ocr_context = await self.run_paddle_ocr_normalized(img)
+            
+            schema_dict = schema_class.model_json_schema()
+            schema_str = json.dumps(schema_dict, indent=2)
+            full_system_prompt = SYSTEM_PROMPT.format(
+                ocr_context=ocr_context, 
+                schema_str=schema_str
+            )
+            
+            logger.info(f"Calling VLLM ({self.model_name})...")
+            image_b64 = await asyncio.to_thread(self.encode_image_base64, img)
+        except UnidentifiedImageError as e:
+            logger.error(f"Invalid image format: {e}")
+            raise HTTPException(status_code=400, detail="Uploaded file is not a valid image format.")
+        except httpx.HTTPError as e:
+            logger.error(f"Failed to fetch image from URL: {e}")
+            raise HTTPException(status_code=400, detail=f"Failed to fetch image from URL: {str(e)}")
         except Exception as e:
             logger.error(f"Failed to load image: {e}")
-            return None
-        
-        logger.info("Running PaddleOCR...")
-        ocr_context = self.run_paddle_ocr_normalized(img)
-        
-        schema_dict = schema_class.model_json_schema()
-        schema_str = json.dumps(schema_dict, indent=2)
-        full_system_prompt = SYSTEM_PROMPT.format(
-            ocr_context=ocr_context, 
-            schema_str=schema_str
-        )
-        
-        logger.info(f"Calling VLLM ({self.model_name})...")
-        image_b64 = self.encode_image_base64(img)
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(status_code=500, detail=f"Failed to load image: {str(e)}")
+        finally:
+            if img:
+                img.close()
         
         try:
             combined_prompt = f"{full_system_prompt}\n\nAnalyze the attached document and perform structured extraction according to the schema."
             
-            response = self.client.beta.chat.completions.parse(
+            response = await self.client.beta.chat.completions.parse(
                 model=self.model_name,
                 messages=[
                     {
@@ -118,16 +138,20 @@ class VLLMDocumentProcessor:
                     }
                 ],
                 response_format=schema_class,
+                temperature=0.0,
+                max_completion_tokens=2048,
             )
             
             extraction = response.choices[0].message.parsed
             
             if not extraction:
                 logger.error("Model failed to parse output into schema")
-                return None
+                raise HTTPException(status_code=500, detail="VLLM failed to parse structured output.")
                 
             return extraction.model_dump()
         
         except Exception as e:
             logger.error(f"Error during VLLM parse: {e}")
-            return None
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(status_code=500, detail=f"VLLM inference error: {str(e)}")

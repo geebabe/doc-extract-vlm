@@ -10,30 +10,42 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - VLLM_BASE_URL=http://qwen-model:8000/v1
-      - VLLM_MODEL_NAME=${MODEL_ID:-Qwen/Qwen3-VL-2B-Instruct}
+      - VLLM_BASE_URL=http://vintern-model:8000/v1
+      - VLLM_MODEL_NAME=${MODEL_ID:-5CD-AI/Vintern-1B-v3_5}
       - VLLM_API_KEY=none
     depends_on:
-      qwen-model:
+      vintern-model:
         condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     networks:
       - ocr-network
 
-  qwen-model:
+  vintern-model:
     image: vllm/vllm-openai:latest
-    container_name: qwen-model-service
+    container_name: vintern-model-service
     restart: unless-stopped
     environment:
       - HF_TOKEN
-      - MODEL_ID=${MODEL_ID:-Qwen/Qwen3-VL-2B-Instruct}
-    command: >
-      --model ${MODEL_ID:-Qwen/Qwen3-VL-2B-Instruct}
-      --max-model-len 16384
-      --max-num-batched-tokens 16384
-      --gpu-memory-utilization 0.9
-      --trust-remote-code
-      --enforce-eager
-      --tensor-parallel-size 1
+      - MODEL_ID=${MODEL_ID:-5CD-AI/Vintern-1B-v3_5}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        pip install sentencepiece --quiet &&
+        python -m vllm.entrypoints.openai.api_server \
+          --model ${MODEL_ID:-5CD-AI/Vintern-1B-v3_5} \
+          --max-model-len 8192 \
+          --max-num-batched-tokens 8192 \
+          --gpu-memory-utilization 0.80 \
+          --max-num-seqs 8 \
+          --trust-remote-code \
+          --enforce-eager \
+          --tensor-parallel-size 1
     shm_size: '8gb'
     ports:
       - "8001:8000"
