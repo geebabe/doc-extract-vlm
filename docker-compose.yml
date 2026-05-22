@@ -36,8 +36,8 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
-        pip install sentencepiece --quiet &&
-        python -m vllm.entrypoints.openai.api_server \
+        pip3 install sentencepiece --quiet &&
+        python3 -m vllm.entrypoints.openai.api_server \
           --model ${MODEL_ID:-Qwen/Qwen3-VL-2B-Instruct} \
           --max-model-len 8192 \
           --max-num-batched-tokens 8192 \
