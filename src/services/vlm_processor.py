@@ -10,21 +10,8 @@ import httpx
 import asyncio
 from fastapi import HTTPException
 from src.core.logger import logger
-
-SYSTEM_PROMPT = """You are an advanced OCR and document understanding system. Your goal is to extract structured information from the provided document image with high precision.
-
-### KEY INSTRUCTIONS:
-1. **NATIVE GROUNDING**: For every field, you must provide the extracted text (value) and its precise coordinates (bounding_box).
-2. **COORDINATE SYSTEM**: All bounding boxes MUST be normalized to a scale of [0, 1000]. The format is [xmin, ymin, xmax, ymax].
-3. **OUTPUT FORMAT**: Return strictly valid JSON matching the provided schema. No markdown, no conversational fillers, and no explanations.
-
-### CONTEXTUAL HINTS:
-- **Language**: The document is primarily in Vietnamese. Pay close attention to diacritics and specialized terms.
-- **Preliminary OCR**: Below is a draft OCR extraction (already normalized to [0, 1000]) to help you identify characters and locations. Use these as hints, but rely on your visual perception if the image contradicts these hints:
-{ocr_context}
-
-### SCHEMA DEFINITION:
-{schema_str}"""
+from src.services.prompt_builder import build_system_prompt, get_user_prompt
+from src.services.post_processor import post_process_extraction
 
 class VLLMDocumentProcessor:
     def __init__(self, base_url: str, model_name: str, api_key: str, ocr_engine: Any):
@@ -78,7 +65,12 @@ class VLLMDocumentProcessor:
 
         return "\n".join(ocr_rows)
 
-    async def process(self, image_source: str, schema_class: type[BaseModel]) -> Optional[dict]:
+    async def process(
+        self,
+        image_source: str,
+        schema_class: type[BaseModel],
+        route_key: str = "general",
+    ) -> Optional[dict]:
         img = None
         try:
             if image_source.startswith("http"):
@@ -89,16 +81,12 @@ class VLLMDocumentProcessor:
             else:
                 img = await asyncio.to_thread(Image.open, image_source)
                 img = img.convert("RGB")
-            
+
             logger.info("Running PaddleOCR...")
             ocr_context = await self.run_paddle_ocr_normalized(img)
-            
-            schema_dict = schema_class.model_json_schema()
-            schema_str = json.dumps(schema_dict, indent=2)
-            full_system_prompt = SYSTEM_PROMPT.format(
-                ocr_context=ocr_context, 
-                schema_str=schema_str
-            )
+
+            system_prompt = build_system_prompt(route_key, ocr_context)
+            user_prompt = get_user_prompt(route_key)
             
             logger.info(f"Calling VLLM ({self.model_name})...")
             image_b64 = await asyncio.to_thread(self.encode_image_base64, img)
@@ -118,7 +106,7 @@ class VLLMDocumentProcessor:
                 img.close()
         
         try:
-            combined_prompt = f"{full_system_prompt}\n\nAnalyze the attached document and perform structured extraction according to the schema."
+            combined_prompt = f"{system_prompt}\n\n{user_prompt}"
             
             response = await self.client.beta.chat.completions.parse(
                 model=self.model_name,
@@ -143,12 +131,23 @@ class VLLMDocumentProcessor:
             )
             
             extraction = response.choices[0].message.parsed
-            
+
             if not extraction:
                 logger.error("Model failed to parse output into schema")
                 raise HTTPException(status_code=500, detail="VLLM failed to parse structured output.")
-                
-            return extraction.model_dump()
+
+            extraction_dict = extraction.model_dump()
+
+            # Post-process: reconcile VLM output with OCR
+            corrected_extraction, correction_metadata = post_process_extraction(
+                extraction_dict, ocr_context, schema_class, route_key
+            )
+
+            if correction_metadata.corrections:
+                logger.info(f"Post-processing corrections: {len(correction_metadata.corrections)} fields adjusted")
+                logger.debug(f"Correction details: {correction_metadata.to_dict()}")
+
+            return corrected_extraction
         
         except Exception as e:
             logger.error(f"Error during VLLM parse: {e}")

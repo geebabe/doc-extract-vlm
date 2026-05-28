@@ -14,3 +14,9 @@ inference.py
 sample_images/
 .DS_Store
 draft.md
+scratch/
+
+batch_inference.py
+draft.txt
+test_img.py
+improvement.md
