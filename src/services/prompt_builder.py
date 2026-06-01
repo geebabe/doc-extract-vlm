@@ -7,11 +7,18 @@ from dataclasses import dataclass
 
 
 BBOX_FIELD_FORMAT = """\
-Every field follows this structure:
+Every field MUST be returned as an object with this exact structure, never as a
+bare null at the top level:
   {
     "value": "<exact text from document, or null if absent>",
     "bounding_box": [xmin, ymin, xmax, ymax]   (integers, normalized to [0, 1000] scale, or null)
-  }"""
+  }
+
+CORRECT for an absent field:    "issue_place": {"value": null, "bounding_box": null}
+WRONG for an absent field:      "issue_place": null
+
+Wrapping null inside the object preserves the schema; emitting top-level null is
+not allowed even if the schema technically accepts it."""
 
 
 SHARED_RULES = """\
@@ -79,33 +86,69 @@ output an empty list []. Each item must have at minimum a "description". Set mis
 
 
 CCCD_FIELD_DEFS = """\
-=== CARD SIDES AND FIELD LOCATIONS ===
+=== CARD SIDES — DETECT BEFORE EXTRACTING ===
 
-Vietnamese CCCD cards have TWO sides:
-- FRONT SIDE: Contains name, date of birth, gender, nationality, place of origin.
-- BACK SIDE: Contains ID number, expiry date, issue date, issue place, place of residence.
+Vietnamese CCCD cards have TWO sides. The image you receive may be EITHER one.
+You must FIRST decide which side(s) are visible, then extract every field that is
+visible. Do NOT assume the image is a front side.
+
+- FRONT SIDE markers: portrait photo, "CĂN CƯỚC CÔNG DÂN" header, fields like
+  Họ và tên, Ngày sinh, Giới tính, Quốc tịch, Quê quán, Nơi thường trú.
+- BACK SIDE markers: MRZ machine-readable lines (e.g. "IDVNM...", "PHAM<<..."),
+  fingerprint area, "Có giá trị đến", "Ngày, tháng, năm", issuing officer signature,
+  and often "Nơi đăng ký khai sinh" / "Nơi cư trú".
 
 === SCHEMA FIELD DEFINITIONS ===
 
-FRONT SIDE FIELDS (primary):
-- id_number             : ID number (Số căn cước công dân). Usually on the BACK side only.
-                          SET TO NULL if not visible on front.
-- full_name             : Full name (Họ và tên). Always on FRONT.
-- date_of_birth         : Date of birth (Ngày sinh). Always on FRONT.
-- gender                : Gender (Giới tính). Often on FRONT.
-- nationality           : Nationality (Quốc tịch). Often on FRONT.
-- place_of_origin       : Place of origin (Quê quán). Often on FRONT.
-- place_of_residence    : Place of residence (Nơi thường trú). Usually on BACK side only.
-                          SET TO NULL if not visible on front.
-- expiry_date           : Expiry date (Có giá trị đến). Usually on BACK side only.
-                          SET TO NULL if not visible on front.
-- issue_date            : Date of issue (Ngày cấp). Usually on BACK side only.
-                          SET TO NULL if not visible on front.
-- issue_place           : Place of issue (Nơi cấp). Usually on BACK side only.
-                          SET TO NULL if not visible on front.
+All fields below MAY appear on either side depending on the card generation.
+Extract EVERY field that you can read from the visible side. Only set a field's
+value to null when it is genuinely not on the visible side of THIS image.
 
-SIDE-SPECIFIC RULE: If a field is not visible on the current card side, output: {"value": null, "bounding_box": null}.
-Do NOT hallucinate or assume field values from the other side."""
+- id_number             : ID number (Số căn cước công dân / Số/No.). On newer
+                          CCCDs it is printed on the FRONT under the photo; on
+                          older cards and on the MRZ it appears on the BACK.
+                          If you see an MRZ line starting with "IDVNM", the
+                          digits embedded in it ARE the id_number.
+- full_name             : Full name (Họ và tên / Full name). Usually FRONT in
+                          plain text. The MRZ on the BACK also encodes the name
+                          (e.g. "PHAM<<THI<NHAT<LE" → "PHẠM THỊ NHẬT LỆ"); if
+                          only the MRZ is visible, decode it (replace "<" with
+                          spaces, restore Vietnamese diacritics where obvious).
+- date_of_birth         : Date of birth (Ngày sinh / Date of birth). FRONT.
+                          Also encoded in the MRZ as YYMMDD on the BACK.
+- gender                : Gender (Giới tính / Sex). FRONT. Values: "Nam" or "Nữ".
+                          Encoded as M/F in the MRZ on the BACK.
+- nationality           : Nationality (Quốc tịch / Nationality). FRONT. Usually
+                          "Việt Nam". Encoded as "VNM" in the MRZ on the BACK.
+- place_of_origin       : Place of origin (Quê quán / Place of origin). FRONT.
+- place_of_residence    : Place of residence (Nơi thường trú / Nơi cư trú /
+                          Place of residence). FRONT on newer cards, BACK on
+                          older ones.
+- expiry_date           : Expiry date (Có giá trị đến / Date of expiry). FRONT
+                          on newer cards (under "Có giá trị đến"), BACK on
+                          older cards.
+- issue_date            : Date of issue (Ngày, tháng, năm / Date of issue).
+                          Usually BACK, near the issuing officer's signature.
+- issue_place           : Place of issue (Nơi cấp / Place of issue). Usually
+                          BACK. Often "CỤC TRƯỞNG CỤC CẢNH SÁT QUẢN LÝ HÀNH
+                          CHÍNH VỀ TRẬT TỰ XÃ HỘI" or "BỘ CÔNG AN".
+
+=== HARD RULES FOR CCCD EXTRACTION ===
+
+1. EXTRACT WHAT IS VISIBLE. If the OCR or image shows a value, you MUST return
+   it. The presence of MRZ lines means this is a BACK side — extract id_number,
+   expiry_date, issue_date, issue_place, place_of_residence from what you see.
+   The absence of a portrait does NOT mean every field should be null.
+
+2. ONLY a field that is genuinely off-side gets null. For example: on a pure
+   front-side image with no MRZ visible, issue_place may legitimately be null.
+   But never return ALL fields as null if ANY value is readable.
+
+3. MRZ DECODING (back side): the 3 lines beginning with "IDVNM..." encode
+   id_number (digits), date_of_birth (YYMMDD before the first check digit),
+   gender (M/F), expiry (YYMMDD before second check digit), nationality (VNM),
+   and surname/given names (separated by "<<"). Use the MRZ as ground truth
+   for these fields when the printed text is unclear."""
 
 
 GENERAL_FIELD_DEFS = """\
