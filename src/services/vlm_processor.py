@@ -118,17 +118,21 @@ class VLLMDocumentProcessor:
         results = await _try(img_np)
 
         if results is None:
-            # Retry at a safe-but-different stride-32 size. 1024x1024 inputs
-            # are the known crash repro; 960 longest-side avoids it.
+            # Retry at a non-square stride-32 size. The known CPU PP-OCRv5
+            # crash repro is square inputs at H==W==1024 (and likely other
+            # square sizes) interacting with the textline orientation model,
+            # so the retry MUST break the square aspect, not just shrink.
             try:
-                safe_long = 960
-                long_side = max(img_w, img_h)
-                scale = safe_long / long_side
-                new_w = max(32, (int(img_w * scale) // 32) * 32)
-                new_h = max(32, (int(img_h * scale) // 32) * 32)
+                safe_long = 960  # multiple of 32, well clear of 1024
+                safe_short = 768  # multiple of 32, breaks square aspect
+                if img_w >= img_h:
+                    new_w, new_h = safe_long, safe_short
+                else:
+                    new_w, new_h = safe_short, safe_long
                 if (new_w, new_h) != (img_w, img_h):
                     logger.warning(
-                        f"Retrying PaddleOCR at {new_w}x{new_h} (was {img_w}x{img_h})"
+                        f"Retrying PaddleOCR at {new_w}x{new_h} (was {img_w}x{img_h}, "
+                        f"breaking square aspect)"
                     )
                     retry_img = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
                     retry_np = np.array(retry_img)
