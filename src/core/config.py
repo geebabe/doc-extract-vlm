@@ -17,7 +17,12 @@ class Settings(BaseSettings):
     OCR_USE_DOC_UNWARPING: bool = False
     OCR_USE_TEXTLINE_ORIENTATION: bool = True
     OCR_TEXT_REC_SCORE_THRESH: float = 0.5
-    
+
+    # Debug: when enabled, write per-request OCR text, prompt, and raw VLM
+    # response to DEBUG_DUMP_DIR so failures can be triaged offline.
+    DEBUG_DUMP_ENABLED: bool = False
+    DEBUG_DUMP_DIR: str = "debug_dumps"
+
     @field_validator("OCR_TEXT_REC_SCORE_THRESH", mode="before")
     @classmethod
     def clean_float(cls, v):

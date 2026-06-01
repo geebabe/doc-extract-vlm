@@ -1,7 +1,11 @@
 import json
 import base64
 import io
+import os
+import re
 import threading
+import uuid
+from datetime import datetime
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 from typing import Optional, Any
@@ -11,11 +15,61 @@ import httpx
 import asyncio
 from fastapi import HTTPException
 import time
+from src.core.config import settings
 from src.core.logger import logger
 from src.services.prompt_builder import build_system_prompt, get_user_prompt
 from src.services.post_processor import post_process_extraction
 from src.services.image_utils import preprocess_image
 from src.core.metrics import OCR_TIME, VLM_TIME, TOTAL_TIME, CORRECTION_COUNT
+
+
+def _safe_stem(image_source: str) -> str:
+    base = os.path.basename(image_source) or "request"
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
+    return base[:120]
+
+
+def _write_debug_dump(
+    image_source: str,
+    route_key: str,
+    ocr_context: str,
+    system_prompt: str,
+    user_prompt: str,
+    raw_response: Optional[str] = None,
+    parsed: Optional[dict] = None,
+) -> None:
+    """Best-effort write of OCR text, prompt, and VLM raw output for offline triage."""
+    if not settings.DEBUG_DUMP_ENABLED:
+        return
+    try:
+        os.makedirs(settings.DEBUG_DUMP_DIR, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem = f"{ts}_{route_key}_{_safe_stem(image_source)}_{uuid.uuid4().hex[:6]}"
+        base_path = os.path.join(settings.DEBUG_DUMP_DIR, stem)
+
+        with open(f"{base_path}_ocr.txt", "w", encoding="utf-8") as f:
+            f.write(f"# source: {image_source}\n# route: {route_key}\n\n")
+            f.write(ocr_context or "")
+
+        with open(f"{base_path}_prompt.txt", "w", encoding="utf-8") as f:
+            f.write(f"# source: {image_source}\n# route: {route_key}\n\n")
+            f.write("===== SYSTEM PROMPT =====\n")
+            f.write(system_prompt or "")
+            f.write("\n\n===== USER PROMPT =====\n")
+            f.write(user_prompt or "")
+
+        if raw_response is not None:
+            with open(f"{base_path}_vlm_raw.txt", "w", encoding="utf-8") as f:
+                f.write(f"# source: {image_source}\n# route: {route_key}\n\n")
+                f.write(raw_response)
+
+        if parsed is not None:
+            with open(f"{base_path}_parsed.json", "w", encoding="utf-8") as f:
+                json.dump(parsed, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Debug dump written: {base_path}_*")
+    except Exception as e:
+        logger.warning(f"Failed to write debug dump: {e}")
 
 class VLLMDocumentProcessor:
     def __init__(self, base_url: str, model_name: str, api_key: str, ocr_engine: Any):
@@ -130,11 +184,13 @@ class VLLMDocumentProcessor:
             if img:
                 img.close()
         
+        raw_response_text: Optional[str] = None
+        extraction_dict: Optional[dict] = None
         try:
             total_start = time.time()
             start_vlm = time.time()
             combined_prompt = f"{system_prompt}\n\n{user_prompt}"
-            
+
             response = await self.client.beta.chat.completions.parse(
                 model=self.model_name,
                 messages=[
@@ -158,11 +214,21 @@ class VLLMDocumentProcessor:
             )
             vlm_duration = time.time() - start_vlm
             VLM_TIME.labels(route=route_key).observe(vlm_duration)
-            
+
+            # Capture the model's raw textual output for debugging.
+            try:
+                raw_response_text = response.choices[0].message.content
+            except Exception:
+                raw_response_text = None
+
             extraction = response.choices[0].message.parsed
 
             if not extraction:
                 logger.error("Model failed to parse output into schema")
+                _write_debug_dump(
+                    image_source, route_key, ocr_context, system_prompt, user_prompt,
+                    raw_response=raw_response_text, parsed=None,
+                )
                 raise HTTPException(status_code=500, detail="VLLM failed to parse structured output.")
 
             extraction_dict = extraction.model_dump()
@@ -180,10 +246,26 @@ class VLLMDocumentProcessor:
             total_duration = time.time() - total_start
             TOTAL_TIME.labels(route=route_key).observe(total_duration)
 
+            # Always dump when enabled, or only when every extracted field is null
+            # (the "success=true but no data" failure mode the user is debugging).
+            should_dump = settings.DEBUG_DUMP_ENABLED and (
+                not corrected_extraction
+                or all(v is None for v in corrected_extraction.values())
+            )
+            if should_dump:
+                _write_debug_dump(
+                    image_source, route_key, ocr_context, system_prompt, user_prompt,
+                    raw_response=raw_response_text, parsed=corrected_extraction,
+                )
+
             return corrected_extraction
-        
+
         except Exception as e:
             logger.error(f"Error during VLLM parse: {e}")
+            _write_debug_dump(
+                image_source, route_key, ocr_context, system_prompt, user_prompt,
+                raw_response=raw_response_text, parsed=extraction_dict,
+            )
             if isinstance(e, HTTPException):
                 raise e
             raise HTTPException(status_code=500, detail=f"VLLM inference error: {str(e)}")
