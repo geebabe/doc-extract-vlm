@@ -36,17 +36,18 @@ class CorrectionMetadata:
         }
 
 
+import json
+
 def extract_ocr_text(ocr_context: str) -> List[str]:
     """Parse OCR context into list of text strings."""
     lines = ocr_context.strip().split('\n')
     texts = []
     for line in lines:
         try:
-            # Format: (text, [xmin, ymin, xmax, ymax])
-            # Extract text between parentheses and comma
-            match = re.match(r'\(([^,]+),\s*\[', line)
-            if match:
-                text = match.group(1).strip().strip("'\"")
+            # Format: {"t": "text", "b": [x1, y1, x2, y2]}
+            data = json.loads(line)
+            if 't' in data:
+                text = data['t'].strip()
                 if text:
                     texts.append(text)
         except Exception:

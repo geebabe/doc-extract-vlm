@@ -9,9 +9,12 @@ from openai import AsyncOpenAI
 import httpx
 import asyncio
 from fastapi import HTTPException
+import time
 from src.core.logger import logger
 from src.services.prompt_builder import build_system_prompt, get_user_prompt
 from src.services.post_processor import post_process_extraction
+from src.services.image_utils import preprocess_image
+from src.core.metrics import OCR_TIME, VLM_TIME, TOTAL_TIME, CORRECTION_COUNT
 
 class VLLMDocumentProcessor:
     def __init__(self, base_url: str, model_name: str, api_key: str, ocr_engine: Any):
@@ -50,7 +53,7 @@ class VLLMDocumentProcessor:
                 ymin = int(max(0, min(1000, (box[1] / img_h) * 1000)))
                 xmax = int(max(0, min(1000, (box[2] / img_w) * 1000)))
                 ymax = int(max(0, min(1000, (box[3] / img_h) * 1000)))
-                ocr_rows.append(str((text, [xmin, ymin, xmax, ymax])))
+                ocr_rows.append(json.dumps({"t": text, "b": [xmin, ymin, xmax, ymax]}, ensure_ascii=False))
         else:
             for line in page:
                 box = line[0] 
@@ -61,7 +64,7 @@ class VLLMDocumentProcessor:
                 ymin = int(max(0, min(1000, (min(ys) / img_h) * 1000)))
                 xmax = int(max(0, min(1000, (max(xs) / img_w) * 1000)))
                 ymax = int(max(0, min(1000, (max(ys) / img_h) * 1000)))
-                ocr_rows.append(str((text, [xmin, ymin, xmax, ymax])))
+                ocr_rows.append(json.dumps({"t": text, "b": [xmin, ymin, xmax, ymax]}, ensure_ascii=False))
 
         return "\n".join(ocr_rows)
 
@@ -82,8 +85,14 @@ class VLLMDocumentProcessor:
                 img = await asyncio.to_thread(Image.open, image_source)
                 img = img.convert("RGB")
 
+            # Preprocess image
+            img = preprocess_image(img, route_key)
+
             logger.info("Running PaddleOCR...")
+            start_ocr = time.time()
             ocr_context = await self.run_paddle_ocr_normalized(img)
+            ocr_duration = time.time() - start_ocr
+            OCR_TIME.labels(route=route_key).observe(ocr_duration)
 
             system_prompt = build_system_prompt(route_key, ocr_context)
             user_prompt = get_user_prompt(route_key)
@@ -106,6 +115,8 @@ class VLLMDocumentProcessor:
                 img.close()
         
         try:
+            total_start = time.time()
+            start_vlm = time.time()
             combined_prompt = f"{system_prompt}\n\n{user_prompt}"
             
             response = await self.client.beta.chat.completions.parse(
@@ -127,8 +138,10 @@ class VLLMDocumentProcessor:
                 ],
                 response_format=schema_class,
                 temperature=0.0,
-                max_completion_tokens=2048,
+                max_completion_tokens=4096,
             )
+            vlm_duration = time.time() - start_vlm
+            VLM_TIME.labels(route=route_key).observe(vlm_duration)
             
             extraction = response.choices[0].message.parsed
 
@@ -146,6 +159,10 @@ class VLLMDocumentProcessor:
             if correction_metadata.corrections:
                 logger.info(f"Post-processing corrections: {len(correction_metadata.corrections)} fields adjusted")
                 logger.debug(f"Correction details: {correction_metadata.to_dict()}")
+                CORRECTION_COUNT.labels(route=route_key).inc(len(correction_metadata.corrections))
+
+            total_duration = time.time() - total_start
+            TOTAL_TIME.labels(route=route_key).observe(total_duration)
 
             return corrected_extraction
         

@@ -181,7 +181,7 @@ def build_system_prompt(route_key: str, ocr_context: str) -> str:
 
 ### CONTEXTUAL HINTS:
 - **Language**: The document is primarily in Vietnamese. Pay close attention to diacritics and specialized terms.
-- **Preliminary OCR**: Below is a draft OCR extraction (already normalized to [0, 1000]) to help you identify characters and locations. Use these as hints, but rely on your visual perception if the image contradicts these hints:
+- **Preliminary OCR**: Below is a draft OCR extraction in JSON format ({"t": text, "b": [xmin, ymin, xmax, ymax]}, normalized to [0, 1000]) to help you identify characters and locations. Use these as hints, but rely on your visual perception if the image contradicts these hints:
 {ocr_context}
 
 {config.field_definitions}

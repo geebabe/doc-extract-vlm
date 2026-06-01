@@ -9,7 +9,7 @@ from src.core.config import settings
 from src.core.logger import logger
 
 def get_device() -> str:
-    device = "gpu:0" if paddle.is_compiled_with_cuda() else "cpu"
+    device = "cpu"
     logger.info(f"PaddleOCR using device: {device}")
     return device
 

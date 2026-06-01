@@ -4,10 +4,12 @@ A FastAPI-based document information extraction service. This project combines t
 
 ## Features
 
-- **Two-Stage Extraction Pipeline**: Utilizes local PaddleOCR for preliminary text detection and recognition, feeding the normalized bounding box coordinates into Qwen3-VL-2B for enhanced visual-language processing.
+- **Two-Stage Extraction Pipeline**: Utilizes local PaddleOCR for preliminary text detection and recognition, feeding the normalized bounding box coordinates into Qwen3-VL-2B for enhanced visual-language processing. The OCR outputs are converted to JSON representation for robust parsing.
 - **Dynamic Pydantic Schemas**: Extracted data is guaranteed to adhere strictly to predefined JSON schemas via OpenAI-compatible structured outputs.
 - **Route-Based Schema Selection**: Different endpoints map automatically to different document schemas.
 - **Support for Both Files & URLs**: Submit document images either as a direct file upload or via a public URL.
+- **Built-in Image Preprocessing**: Automatically downscales large images, upscales small images, and deskews ID cards (using `cv2.minAreaRect`).
+- **Observability**: Prometheus metrics enabled at `/metrics` (request histograms for OCR and VLM processing times, and correction counts), along with request ID tracking via `X-Request-ID` headers.
 
 ## Supported Document Schemas
 
@@ -93,6 +95,7 @@ Once the server is running, interactive API documentation is automatically gener
 | Method | Endpoint                     | Description                                           |
 |--------|------------------------------|-------------------------------------------------------|
 | `GET`  | `/health`                    | Health check endpoint.                                |
+| `GET`  | `/metrics`                   | Prometheus metrics endpoint.                          |
 | `POST` | `/extract/invoice/file`      | Upload an invoice image for extraction.               |
 | `POST` | `/extract/invoice/url`       | Submit an invoice URL for extraction.                 |
 | `POST` | `/extract/id_card/file`      | Upload an ID card image for extraction.               |
