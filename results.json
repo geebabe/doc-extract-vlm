@@ -1,0 +1,107 @@
+[
+  {
+    "success": false,
+    "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114anqqj_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114aszbc_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114babwd_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114budzl_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114cijwj_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114clhnm_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114gmmfs_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 502 Server Error: Bad Gateway for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114gpkup_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114hexkn_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114hexkn_best_annotated.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114hikwd_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114ixmyt_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114lbdpw_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114ledwd_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114lxzmm_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114otgoc_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114qjftu_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114qvgii_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114qwedt_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114qwggd_best.jpg"
+  },
+  {
+    "success": false,
+    "error": "HTTPError: 500 Server Error: Internal Server Error for url: https://8000-01ks1npneehwvsd7pscdgjwp3m.cloudspaces.litng.ai/extract/invoice/file",
+    "source": "data/invoices/mcocr_val_145114rqxas_best.jpg"
+  }
+]

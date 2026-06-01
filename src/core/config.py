@@ -10,8 +10,11 @@ class Settings(BaseSettings):
     
     OCR_LANG: str = "vi"
     OCR_VERSION: str = "PP-OCRv5"
-    OCR_USE_DOC_ORIENTATION_CLASSIFY: bool = True
-    OCR_USE_DOC_UNWARPING: bool = True
+    # Disabled by default: these sub-models use oneDNN kernels that require
+    # input dimensions to be multiples of 32/64 and cause segfaults / broadcast
+    # dimension mismatches on CPU with arbitrary image sizes.
+    OCR_USE_DOC_ORIENTATION_CLASSIFY: bool = False
+    OCR_USE_DOC_UNWARPING: bool = False
     OCR_USE_TEXTLINE_ORIENTATION: bool = True
     OCR_TEXT_REC_SCORE_THRESH: float = 0.5
     

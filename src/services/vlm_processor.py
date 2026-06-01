@@ -1,6 +1,7 @@
 import json
 import base64
 import io
+import threading
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 from typing import Optional, Any
@@ -22,6 +23,7 @@ class VLLMDocumentProcessor:
         self.model_name = model_name
         self.ocr_engine = ocr_engine
         self.http_client = httpx.AsyncClient(timeout=10.0)
+        self.ocr_lock = threading.Lock()
 
     def encode_image_base64(self, image: Image.Image) -> str:
         buffered = io.BytesIO()
@@ -35,8 +37,12 @@ class VLLMDocumentProcessor:
         img_w, img_h = image.size
         img_np = np.array(image)
         
+        def _predict():
+            with self.ocr_lock:
+                return self.ocr_engine.predict(img_np)
+
         # Offload CPU-bound inference to thread pool
-        results = await asyncio.to_thread(self.ocr_engine.predict, img_np)
+        results = await asyncio.to_thread(_predict)
         
         if not results or not results[0]:
             return "Không tìm thấy văn bản nào."
@@ -106,7 +112,7 @@ class VLLMDocumentProcessor:
             logger.error(f"Failed to fetch image from URL: {e}")
             raise HTTPException(status_code=400, detail=f"Failed to fetch image from URL: {str(e)}")
         except Exception as e:
-            logger.error(f"Failed to load image: {e}")
+            logger.error(f"Failed to load image: {e}", exc_info=True)
             if isinstance(e, HTTPException):
                 raise e
             raise HTTPException(status_code=500, detail=f"Failed to load image: {str(e)}")
