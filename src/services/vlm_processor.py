@@ -23,6 +23,12 @@ from src.services.image_utils import preprocess_image
 from src.core.metrics import OCR_TIME, VLM_TIME, TOTAL_TIME, CORRECTION_COUNT
 
 
+# Sentinel strings returned from run_paddle_ocr_normalized when OCR cannot be
+# used. The prompt builder inspects these to switch into a vision-only mode.
+OCR_UNAVAILABLE_SENTINEL = "OCR_UNAVAILABLE"
+OCR_EMPTY_SENTINEL = "OCR_EMPTY"
+
+
 def _safe_stem(image_source: str) -> str:
     base = os.path.basename(image_source) or "request"
     base = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
@@ -86,30 +92,59 @@ class VLLMDocumentProcessor:
 
     async def run_paddle_ocr_normalized(self, image: Image.Image) -> str:
         if self.ocr_engine is None:
-            return "OCR engine not initialized."
+            return OCR_UNAVAILABLE_SENTINEL
 
         img_w, img_h = image.size
-        img_np = np.array(image)
 
-        def _predict():
+        def _predict(arr: np.ndarray):
             with self.ocr_lock:
-                return self.ocr_engine.predict(img_np)
+                return self.ocr_engine.predict(arr)
 
-        # Offload CPU-bound inference to thread pool.
         # PaddleOCR's CPU static predictor can raise a generic std::exception on
-        # certain inputs. Degrade gracefully so the VLM can still process the
-        # image without OCR hints rather than failing the whole request.
-        try:
-            results = await asyncio.to_thread(_predict)
-        except Exception as e:
-            logger.error(
-                f"PaddleOCR predict failed (shape={img_np.shape}, dtype={img_np.dtype}, "
-                f"size={img_w}x{img_h}): {type(e).__name__}: {e}"
-            )
-            return "OCR unavailable for this image."
+        # certain input sizes (e.g. exactly 1024x1024 with PP-OCRv5 + textline
+        # orientation). Retry once at a different size before giving up so the
+        # VLM still gets useful OCR hints.
+        async def _try(arr: np.ndarray) -> Optional[list]:
+            try:
+                return await asyncio.to_thread(_predict, arr)
+            except Exception as exc:
+                logger.error(
+                    f"PaddleOCR predict failed (shape={arr.shape}, dtype={arr.dtype}): "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                return None
+
+        img_np = np.array(image)
+        results = await _try(img_np)
+
+        if results is None:
+            # Retry at a safe-but-different stride-32 size. 1024x1024 inputs
+            # are the known crash repro; 960 longest-side avoids it.
+            try:
+                safe_long = 960
+                long_side = max(img_w, img_h)
+                scale = safe_long / long_side
+                new_w = max(32, (int(img_w * scale) // 32) * 32)
+                new_h = max(32, (int(img_h * scale) // 32) * 32)
+                if (new_w, new_h) != (img_w, img_h):
+                    logger.warning(
+                        f"Retrying PaddleOCR at {new_w}x{new_h} (was {img_w}x{img_h})"
+                    )
+                    retry_img = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                    retry_np = np.array(retry_img)
+                    # Rescale OCR coords using the resized dims so normalized
+                    # boxes still map to [0, 1000] correctly.
+                    img_w, img_h = new_w, new_h
+                    results = await _try(retry_np)
+            except Exception as exc:
+                logger.error(f"OCR retry preparation failed: {type(exc).__name__}: {exc}")
+                results = None
+
+        if results is None:
+            return OCR_UNAVAILABLE_SENTINEL
 
         if not results or not results[0]:
-            return "Không tìm thấy văn bản nào."
+            return OCR_EMPTY_SENTINEL
 
         ocr_rows = []
         page = results[0]

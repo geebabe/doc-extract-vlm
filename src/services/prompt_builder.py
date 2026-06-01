@@ -157,18 +157,74 @@ PROMPT_CONFIGS = {
 }
 
 
+OCR_UNAVAILABLE_SENTINELS = {"OCR_UNAVAILABLE", "OCR_EMPTY"}
+
+
+VISION_ONLY_RULES = """\
+=== STRICT RULES ===
+
+1. NULL VALUES: Only set {"value": null, "bounding_box": null} when the field is genuinely
+   absent from the image (e.g., a back-side-only field on a front-side photo). If the value
+   IS visible in the image, you MUST extract it.
+
+2. NO HALLUCINATION: Do not infer, guess, or fabricate values. If uncertain, output null.
+   But uncertainty about coordinates is NOT a reason to null out a clearly visible value —
+   set the bounding_box to null in that case and still return the value.
+
+3. EXACT PRESERVATION: Copy the value exactly as it appears on the document, including:
+   - Spacing, punctuation, and capitalization
+   - Numeric separators (e.g., "1.234.567" not "1234567")
+   - Date formats (e.g., "15/03/2024" not "2024-03-15")
+   - Vietnamese diacritics (e.g., "Công ty TNHH", not "Cong ty TNHH")
+
+4. BOUNDING BOX: OCR text-line coordinates are unavailable for this image. Set
+   "bounding_box": null for every field. Do NOT fabricate coordinates.
+
+5. MULTI-LINE VALUES: If a field spans multiple lines (e.g., a long address), concatenate
+   with a single space.
+
+6. JSON-ONLY OUTPUT: Return strictly valid JSON matching the provided schema.
+   No markdown, no conversational fillers, and no explanations."""
+
+
 def build_system_prompt(route_key: str, ocr_context: str) -> str:
     """
     Build a complete system prompt for a specific document extraction route.
 
     Args:
         route_key: Document type ("invoice", "id_card", "general", or custom)
-        ocr_context: Preliminary OCR extraction results (normalized to [0, 1000])
+        ocr_context: Preliminary OCR extraction results (normalized to [0, 1000]),
+                     or one of OCR_UNAVAILABLE_SENTINELS when OCR could not run.
 
     Returns:
         Complete system prompt including role, field definitions, rules, and OCR context
     """
     config = PROMPT_CONFIGS.get(route_key) or PROMPT_CONFIGS["general"]
+
+    ocr_failed = (ocr_context or "").strip() in OCR_UNAVAILABLE_SENTINELS
+
+    if ocr_failed:
+        # Vision-only path: drop the OCR hint section and relax bbox requirements
+        # so the model still extracts fields from the image directly.
+        prompt = f"""{config.role_description}
+
+### KEY INSTRUCTIONS:
+1. **VISION-ONLY MODE**: OCR text-line hints are unavailable for this image. Extract all
+   fields by visually reading the document. Do not refuse to extract just because OCR is missing.
+2. **OUTPUT FORMAT**: Return strictly valid JSON matching the provided schema.
+3. **BOUNDING BOXES**: Without OCR text-line coordinates, set every "bounding_box" to null.
+   Focus on extracting accurate VALUES.
+
+{BBOX_FIELD_FORMAT}
+
+### CONTEXTUAL HINTS:
+- **Language**: The document is primarily in Vietnamese. Pay close attention to diacritics and specialized terms.
+- **No OCR available**: Read the document directly from the image. Every visible field must be returned.
+
+{config.field_definitions}
+
+{VISION_ONLY_RULES}"""
+        return prompt
 
     prompt = f"""{config.role_description}
 
