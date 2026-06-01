@@ -33,17 +33,27 @@ class VLLMDocumentProcessor:
     async def run_paddle_ocr_normalized(self, image: Image.Image) -> str:
         if self.ocr_engine is None:
             return "OCR engine not initialized."
-            
+
         img_w, img_h = image.size
         img_np = np.array(image)
-        
+
         def _predict():
             with self.ocr_lock:
                 return self.ocr_engine.predict(img_np)
 
-        # Offload CPU-bound inference to thread pool
-        results = await asyncio.to_thread(_predict)
-        
+        # Offload CPU-bound inference to thread pool.
+        # PaddleOCR's CPU static predictor can raise a generic std::exception on
+        # certain inputs. Degrade gracefully so the VLM can still process the
+        # image without OCR hints rather than failing the whole request.
+        try:
+            results = await asyncio.to_thread(_predict)
+        except Exception as e:
+            logger.error(
+                f"PaddleOCR predict failed (shape={img_np.shape}, dtype={img_np.dtype}, "
+                f"size={img_w}x{img_h}): {type(e).__name__}: {e}"
+            )
+            return "OCR unavailable for this image."
+
         if not results or not results[0]:
             return "Không tìm thấy văn bản nào."
 
