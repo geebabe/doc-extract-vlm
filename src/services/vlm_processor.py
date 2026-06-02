@@ -195,7 +195,7 @@ class VLLMDocumentProcessor:
                 img = img.convert("RGB")
 
             # Preprocess image
-            img = preprocess_image(img, route_key)
+            img = preprocess_image(img)
 
             logger.info("Running PaddleOCR...")
             start_ocr = time.time()
