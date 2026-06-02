@@ -3,6 +3,7 @@ Dynamic prompt builder for structured document extraction.
 Supports invoice, ID card, and general document routes with shared rules and route-specific field definitions.
 """
 
+import json
 from dataclasses import dataclass
 
 
@@ -85,70 +86,101 @@ output an empty list []. Each item must have at minimum a "description". Set mis
 {"value": null, "bounding_box": null}. Do not merge rows — one object per invoice line item."""
 
 
-CCCD_FIELD_DEFS = """\
-=== CARD SIDES — DETECT BEFORE EXTRACTING ===
+CCCD_FRONT_FIELD_DEFS = """\
+=== THIS IS THE FRONT SIDE OF A VIETNAMESE CCCD CARD ===
 
-Vietnamese CCCD cards have TWO sides. The image you receive may be EITHER one.
-You must FIRST decide which side(s) are visible, then extract every field that is
-visible. Do NOT assume the image is a front side.
-
-- FRONT SIDE markers: portrait photo, "CĂN CƯỚC CÔNG DÂN" header, fields like
-  Họ và tên, Ngày sinh, Giới tính, Quốc tịch, Quê quán, Nơi thường trú.
-- BACK SIDE markers: MRZ machine-readable lines (e.g. "IDVNM...", "PHAM<<..."),
-  fingerprint area, "Có giá trị đến", "Ngày, tháng, năm", issuing officer signature,
-  and often "Nơi đăng ký khai sinh" / "Nơi cư trú".
+Extract every field that is readable from this front-side image. Fields that are
+only on the back side (issue_date, issue_place) should be set to null.
 
 === SCHEMA FIELD DEFINITIONS ===
 
-All fields below MAY appear on either side depending on the card generation.
-Extract EVERY field that you can read from the visible side. Only set a field's
-value to null when it is genuinely not on the visible side of THIS image.
+- id_number             : ID number (Số căn cước công dân / Số/No.) printed near
+                          the top or below the portrait. Extract the exact digits.
+- full_name             : Full name (Họ và tên / Full name). Printed in plain text.
+- date_of_birth         : Date of birth (Ngày sinh / Date of birth).
+                          Preserve exact format (e.g. "01/01/1990").
+- gender                : Gender (Giới tính / Sex). Values: "Nam" or "Nữ".
+- nationality           : Nationality (Quốc tịch / Nationality). Usually "Việt Nam".
+- place_of_origin       : Place of origin (Quê quán / Place of origin).
+- place_of_residence    : Place of residence (Nơi thường trú / Place of residence).
+                          May span multiple lines — concatenate with a single space.
+- expiry_date           : Expiry date (Có giá trị đến / Date of expiry).
+                          Printed on newer cards on the front.
 
-- id_number             : ID number (Số căn cước công dân / Số/No.). On newer
-                          CCCDs it is printed on the FRONT under the photo; on
-                          older cards and on the MRZ it appears on the BACK.
-                          If you see an MRZ line starting with "IDVNM", the
-                          digits embedded in it ARE the id_number.
-- full_name             : Full name (Họ và tên / Full name). Usually FRONT in
-                          plain text. The MRZ on the BACK also encodes the name
-                          (e.g. "PHAM<<THI<NHAT<LE" → "PHẠM THỊ NHẬT LỆ"); if
-                          only the MRZ is visible, decode it (replace "<" with
-                          spaces, restore Vietnamese diacritics where obvious).
-- date_of_birth         : Date of birth (Ngày sinh / Date of birth). FRONT.
-                          Also encoded in the MRZ as YYMMDD on the BACK.
-- gender                : Gender (Giới tính / Sex). FRONT. Values: "Nam" or "Nữ".
-                          Encoded as M/F in the MRZ on the BACK.
-- nationality           : Nationality (Quốc tịch / Nationality). FRONT. Usually
-                          "Việt Nam". Encoded as "VNM" in the MRZ on the BACK.
-- place_of_origin       : Place of origin (Quê quán / Place of origin). FRONT.
-- place_of_residence    : Place of residence (Nơi thường trú / Nơi cư trú /
-                          Place of residence). FRONT on newer cards, BACK on
-                          older ones.
-- expiry_date           : Expiry date (Có giá trị đến / Date of expiry). FRONT
-                          on newer cards (under "Có giá trị đến"), BACK on
-                          older cards.
+- issue_date            : Set to {"value": null, "bounding_box": null} — back side only.
+- issue_place           : Set to {"value": null, "bounding_box": null} — back side only.
+
+=== HARD RULES ===
+
+1. Extract every field that appears on this front-side image.
+2. Do NOT null out a field that is visually readable or appears in the OCR hints.
+3. issue_date and issue_place are always null for front-side images."""
+
+
+CCCD_BACK_FIELD_DEFS = """\
+=== THIS IS THE BACK SIDE OF A VIETNAMESE CCCD CARD ===
+
+The back side typically contains: MRZ lines, fingerprint area, issue date/place,
+and sometimes place_of_residence. Extract every field visible. The MRZ is the
+primary source for id_number, date_of_birth, gender, expiry_date, nationality,
+and full_name when printed text is unclear.
+
+=== SCHEMA FIELD DEFINITIONS ===
+
+- id_number             : Digits from the MRZ line starting with "IDVNM"
+                          (positions 6–17 after the prefix). Also compare to any
+                          printed "Số:" label on the card.
+- full_name             : Decoded from the MRZ name section (after "<<").
+                          Replace "<" with spaces; restore obvious Vietnamese
+                          diacritics (e.g. "PHAM<<THI<NHAT<LE" → "PHẠM THỊ NHẬT LỆ").
+                          If printed plain text for full_name is visible, prefer that.
+- date_of_birth         : Encoded as YYMMDD in the MRZ (e.g. "900101" → "01/01/1990").
+                          If printed text is visible, prefer that.
+- gender                : M → "Nam", F → "Nữ" (from MRZ). If printed text visible, prefer that.
+- nationality           : "VNM" in MRZ → "Việt Nam".
+- expiry_date           : Encoded as YYMMDD in the MRZ second line (e.g. "350101" → "01/01/2035").
+                          Also may be printed as "Có giá trị đến: DD/MM/YYYY".
 - issue_date            : Date of issue (Ngày, tháng, năm / Date of issue).
-                          Usually BACK, near the issuing officer's signature.
-- issue_place           : Place of issue (Nơi cấp / Place of issue). Usually
-                          BACK. Often "CỤC TRƯỞNG CỤC CẢNH SÁT QUẢN LÝ HÀNH
-                          CHÍNH VỀ TRẬT TỰ XÃ HỘI" or "BỘ CÔNG AN".
+                          Printed near the issuing officer's signature.
+- issue_place           : Place of issue (Nơi cấp). Often
+                          "CỤC TRƯỞNG CỤC CẢNH SÁT QUẢN LÝ HÀNH CHÍNH VỀ TRẬT TỰ XÃ HỘI"
+                          or "BỘ CÔNG AN".
+- place_of_residence    : Printed residence address on the back (older CCCD generation).
+                          If not visible on this back side, set to null.
 
-=== HARD RULES FOR CCCD EXTRACTION ===
+- place_of_origin       : Set to {"value": null, "bounding_box": null} — front side only.
 
-1. EXTRACT WHAT IS VISIBLE. If the OCR or image shows a value, you MUST return
-   it. The presence of MRZ lines means this is a BACK side — extract id_number,
-   expiry_date, issue_date, issue_place, place_of_residence from what you see.
-   The absence of a portrait does NOT mean every field should be null.
+=== HARD RULES ===
 
-2. ONLY a field that is genuinely off-side gets null. For example: on a pure
-   front-side image with no MRZ visible, issue_place may legitimately be null.
-   But never return ALL fields as null if ANY value is readable.
+1. The MRZ is machine-readable ground truth — always decode it for id_number,
+   date_of_birth, gender, expiry_date, nationality, and full_name.
+2. For fields where both MRZ and printed text are visible, prefer the printed text.
+3. place_of_origin is always null for back-side images.
+4. Never return ALL fields as null if MRZ lines are visible."""
 
-3. MRZ DECODING (back side): the 3 lines beginning with "IDVNM..." encode
-   id_number (digits), date_of_birth (YYMMDD before the first check digit),
-   gender (M/F), expiry (YYMMDD before second check digit), nationality (VNM),
-   and surname/given names (separated by "<<"). Use the MRZ as ground truth
-   for these fields when the printed text is unclear."""
+
+def detect_cccd_side(ocr_context: str) -> str:
+    """
+    Detect which side of the CCCD is in the image using OCR text.
+    Returns "front", "back", or "unknown".
+
+    Detection logic:
+    - "back"  : MRZ line found (starts with "IDVNM" or contains "IDVNM")
+    - "front" : "CĂN CƯỚC" or "CAN CUOC" header found (no MRZ)
+    - "unknown": neither signal found; treat as front to avoid over-nulling
+    """
+    from src.services.post_processor import extract_ocr_text  # local import avoids circular deps
+    texts = extract_ocr_text(ocr_context)
+    combined = " ".join(texts).upper()
+
+    has_mrz = any("IDVNM" in t.upper() for t in texts)
+    has_front_header = "CĂN CƯỚC" in combined or "CAN CUOC" in combined
+
+    if has_mrz:
+        return "back"
+    if has_front_header:
+        return "front"
+    return "unknown"
 
 
 GENERAL_FIELD_DEFS = """\
@@ -187,10 +219,15 @@ PROMPT_CONFIGS = {
         field_definitions=INVOICE_FIELD_DEFS,
         user_prompt="Extract structured invoice data from this image following the schema and rules above.",
     ),
-    "id_card": PromptConfig(
+    "id_card_front": PromptConfig(
         role_description="You are a strict Vietnamese CCCD (Căn Cước Công Dân) ID card data extraction engine.\nYour output will be used to extract identity information with high precision, so accuracy is critical.",
-        field_definitions=CCCD_FIELD_DEFS,
-        user_prompt="Extract structured CCCD card data from this image. Carefully handle field visibility based on which side of the card this is.",
+        field_definitions=CCCD_FRONT_FIELD_DEFS,
+        user_prompt="Extract structured CCCD card data from this FRONT-SIDE image following the schema and rules above.",
+    ),
+    "id_card_back": PromptConfig(
+        role_description="You are a strict Vietnamese CCCD (Căn Cước Công Dân) ID card data extraction engine.\nYour output will be used to extract identity information with high precision, so accuracy is critical.",
+        field_definitions=CCCD_BACK_FIELD_DEFS,
+        user_prompt="Extract structured CCCD card data from this BACK-SIDE image. Decode the MRZ lines if present.",
     ),
     "general": PromptConfig(
         role_description="You are an advanced document understanding system. Your goal is to extract structured information from the provided document image with high precision.",
@@ -198,6 +235,9 @@ PROMPT_CONFIGS = {
         user_prompt="Analyze the attached document and perform structured extraction according to the schema.",
     ),
 }
+# Alias: "id_card" resolves to front by default; build_system_prompt overrides
+# this at runtime based on OCR-detected card side.
+PROMPT_CONFIGS["id_card"] = PROMPT_CONFIGS["id_card_front"]
 
 
 OCR_UNAVAILABLE_SENTINELS = {"OCR_UNAVAILABLE", "OCR_EMPTY"}
@@ -242,7 +282,18 @@ def build_system_prompt(route_key: str, ocr_context: str) -> str:
     Returns:
         Complete system prompt including role, field definitions, rules, and OCR context
     """
-    config = PROMPT_CONFIGS.get(route_key) or PROMPT_CONFIGS["general"]
+    # Resolve id_card to a side-specific config using OCR-based detection.
+    if route_key == "id_card":
+        ocr_failed = (ocr_context or "").strip() in OCR_UNAVAILABLE_SENTINELS
+        if not ocr_failed:
+            side = detect_cccd_side(ocr_context)
+            resolved_key = "id_card_back" if side == "back" else "id_card_front"
+        else:
+            resolved_key = "id_card_front"  # vision-only: assume front, safer default
+    else:
+        resolved_key = route_key
+
+    config = PROMPT_CONFIGS.get(resolved_key) or PROMPT_CONFIGS["general"]
 
     ocr_failed = (ocr_context or "").strip() in OCR_UNAVAILABLE_SENTINELS
 
@@ -300,5 +351,8 @@ def get_user_prompt(route_key: str) -> str:
     Returns:
         Route-specific user prompt (falls back to "general" if key not found)
     """
-    config = PROMPT_CONFIGS.get(route_key) or PROMPT_CONFIGS["general"]
+    # id_card falls back to the front config user prompt; the system prompt
+    # already contains the authoritative side information from detect_cccd_side.
+    lookup_key = "id_card_front" if route_key == "id_card" else route_key
+    config = PROMPT_CONFIGS.get(lookup_key) or PROMPT_CONFIGS["general"]
     return config.user_prompt
