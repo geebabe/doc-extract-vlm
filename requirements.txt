@@ -2,7 +2,10 @@ fastapi>=0.115.0
 uvicorn>=0.34.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
-paddlepaddle-gpu==3.0.0
+# NOTE: paddlepaddle-gpu is NOT installed from PyPI — it's installed in the
+# Dockerfile from Paddle's official index so the wheel matches the CUDA base
+# image. Don't add `paddlepaddle-gpu` here; doing so will silently fall back
+# to a non-CUDA build on `pip install -r requirements.txt`.
 paddleocr>=2.9.1
 opencv-python-headless>=4.5.0
 openai>=1.0.0

@@ -12,7 +12,15 @@ RUN apt-get update && apt-get install -y \
     && ln -sf /usr/bin/python3.10 /usr/bin/python
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Paddle GPU from Paddle's official index (matches CUDA 12.6 base image).
+# Must happen before requirements.txt so paddleocr's transitive dep doesn't
+# pull in CPU `paddlepaddle` from PyPI on top of it.
+RUN pip install --no-cache-dir paddlepaddle-gpu==3.0.0 \
+        -i https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
+ && pip install --no-cache-dir -r requirements.txt \
+ && python -c "import paddle; assert paddle.device.is_compiled_with_cuda(), \
+        'paddlepaddle-gpu install did not produce a CUDA-enabled build'"
 
 COPY src /app/src
 
