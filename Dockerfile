@@ -18,9 +18,7 @@ COPY requirements.txt .
 # pull in CPU `paddlepaddle` from PyPI on top of it.
 RUN pip install --no-cache-dir paddlepaddle-gpu==3.0.0 \
         -i https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
- && pip install --no-cache-dir -r requirements.txt \
- && python -c "import paddle; assert paddle.device.is_compiled_with_cuda(), \
-        'paddlepaddle-gpu install did not produce a CUDA-enabled build'"
+ && pip install --no-cache-dir -r requirements.txt
 
 COPY src /app/src
 
@@ -28,4 +26,6 @@ EXPOSE 8000
 
 ENV PYTHONPATH=/app
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Verify CUDA at runtime (when GPU driver is available), not at build time
+CMD python -c "import paddle; assert paddle.device.is_compiled_with_cuda(), 'PaddlePaddle GPU not available'" \
+ && uvicorn src.main:app --host 0.0.0.0 --port 8000
