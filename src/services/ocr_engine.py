@@ -13,7 +13,10 @@ from src.core.logger import logger
 
 
 def get_device() -> str:
-    device = "cpu"
+    if paddle.device.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
+        device = "gpu"
+    else:
+        device = "cpu"
     logger.info(f"PaddleOCR using device: {device}")
     return device
 
@@ -22,16 +25,11 @@ def init_ocr_engine() -> PaddleOCR:
     logger.info("Initializing PaddleOCR engine...")
     device = get_device()
 
-    # NOTE: use_doc_orientation_classify and use_doc_unwarping are disabled on
-    # CPU because their oneDNN sub-models require input dimensions to be strict
-    # multiples of their stride and fail with a broadcast-dimension-mismatch
-    # (or Tensor-not-initialized / segfault) on arbitrary image sizes.
-    # The VLM downstream handles orientation correction well enough without them.
     ocr = PaddleOCR(
         lang=settings.OCR_LANG,
         ocr_version=settings.OCR_VERSION,
-        use_doc_orientation_classify=False,
-        use_doc_unwarping=False,
+        use_doc_orientation_classify=settings.OCR_USE_DOC_ORIENTATION_CLASSIFY,
+        use_doc_unwarping=settings.OCR_USE_DOC_UNWARPING,
         use_textline_orientation=settings.OCR_USE_TEXTLINE_ORIENTATION,
         device=device,
         text_rec_score_thresh=settings.OCR_TEXT_REC_SCORE_THRESH,
