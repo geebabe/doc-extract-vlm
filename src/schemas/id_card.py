@@ -3,16 +3,16 @@ from typing import Optional
 from .base import BBoxField
 
 class IDCardExtraction(BaseModel):
-    id_number: Optional[BBoxField] = Field(default=None, description="ID number (Số căn cước công dân)")
-    full_name: Optional[BBoxField] = Field(default=None, description="Full name (Họ và tên)")
-    date_of_birth: Optional[BBoxField] = Field(default=None, description="Date of birth (Ngày sinh)")
-    gender: Optional[BBoxField] = Field(default=None, description="Gender (Giới tính)")
-    nationality: Optional[BBoxField] = Field(default=None, description="Nationality (Quốc tịch)")
-    place_of_origin: Optional[BBoxField] = Field(default=None, description="Place of origin (Quê quán)")
-    place_of_residence: Optional[BBoxField] = Field(default=None, description="Place of residence (Nơi thường trú)")
-    expiry_date: Optional[BBoxField] = Field(default=None, description="Expiry date (Có giá trị đến)")
-    issue_date: Optional[BBoxField] = Field(default=None, description="Date of issue (Ngày cấp)")
-    issue_place: Optional[BBoxField] = Field(default=None, description="Place of issue (Nơi cấp)")
+    id_number: BBoxField = Field(description="ID number (Số căn cước công dân)")
+    full_name: BBoxField = Field(description="Full name (Họ và tên)")
+    date_of_birth: BBoxField = Field(description="Date of birth (Ngày sinh)")
+    gender: BBoxField = Field(description="Gender (Giới tính)")
+    nationality: BBoxField = Field(description="Nationality (Quốc tịch)")
+    place_of_origin: BBoxField = Field(description="Place of origin (Quê quán)")
+    place_of_residence: BBoxField = Field(description="Place of residence (Nơi thường trú)")
+    expiry_date: BBoxField = Field(description="Expiry date (Có giá trị đến)")
+    issue_date: BBoxField = Field(description="Date of issue (Ngày cấp)")
+    issue_place: BBoxField = Field(description="Place of issue (Nơi cấp)")
 
 class IDCardResponse(BaseModel):
     success: bool

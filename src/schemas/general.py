@@ -7,12 +7,12 @@ class GenericField(BaseModel):
     value: BBoxField = Field(description="The extracted value and its bounding box")
 
 class GeneralDocumentExtraction(BaseModel):
-    title: Optional[BBoxField] = Field(default=None, description="Document title")
-    document_number: Optional[BBoxField] = Field(default=None, description="Document reference number")
-    date: Optional[BBoxField] = Field(default=None, description="Document date")
-    issuer: Optional[BBoxField] = Field(default=None, description="Issuing organization or person")
-    recipients: Optional[List[BBoxField]] = Field(default_factory=list, description="List of recipients")
-    summary: Optional[BBoxField] = Field(default=None, description="Brief summary or abstract of the document")
+    title: BBoxField = Field(description="Document title")
+    document_number: BBoxField = Field(description="Document reference number")
+    date: BBoxField = Field(description="Document date")
+    issuer: BBoxField = Field(description="Issuing organization or person")
+    recipients: List[BBoxField] = Field(default_factory=list, description="List of recipients")
+    summary: BBoxField = Field(description="Brief summary or abstract of the document")
 
     additional_fields: List[GenericField] = Field(
         default_factory=list,

@@ -7,21 +7,6 @@ import json
 from dataclasses import dataclass
 
 
-BBOX_FIELD_FORMAT = """\
-Every field MUST be returned as an object with this exact structure, never as a
-bare null at the top level:
-  {
-    "value": "<exact text from document, or null if absent>",
-    "bounding_box": [xmin, ymin, xmax, ymax]   (integers, normalized to [0, 1000] scale, or null)
-  }
-
-CORRECT for an absent field:    "issue_place": {"value": null, "bounding_box": null}
-WRONG for an absent field:      "issue_place": null
-
-Wrapping null inside the object preserves the schema; emitting top-level null is
-not allowed even if the schema technically accepts it."""
-
-
 SHARED_RULES = """\
 === STRICT RULES ===
 
@@ -309,8 +294,6 @@ def build_system_prompt(route_key: str, ocr_context: str) -> str:
 3. **BOUNDING BOXES**: Without OCR text-line coordinates, set every "bounding_box" to null.
    Focus on extracting accurate VALUES.
 
-{BBOX_FIELD_FORMAT}
-
 ### CONTEXTUAL HINTS:
 - **Language**: The document is primarily in Vietnamese. Pay close attention to diacritics and specialized terms.
 - **No OCR available**: Read the document directly from the image. Every visible field must be returned.
@@ -326,8 +309,6 @@ def build_system_prompt(route_key: str, ocr_context: str) -> str:
 1. **NATIVE GROUNDING**: For every field, you must provide the extracted text (value) and its precise coordinates (bounding_box).
 2. **COORDINATE SYSTEM**: All bounding boxes MUST be normalized to a scale of [0, 1000]. The format is [xmin, ymin, xmax, ymax].
 3. **OUTPUT FORMAT**: Return strictly valid JSON matching the provided schema.
-
-{BBOX_FIELD_FORMAT}
 
 ### CONTEXTUAL HINTS:
 - **Language**: The document is primarily in Vietnamese. Pay close attention to diacritics and specialized terms.
