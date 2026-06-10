@@ -4,6 +4,7 @@ Validates extracted values, corrects hallucinations, and improves consistency.
 """
 
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional, Tuple
 from difflib import SequenceMatcher
 from datetime import datetime
@@ -55,26 +56,27 @@ def extract_ocr_text(ocr_context: str) -> List[str]:
     return texts
 
 
-def fuzzy_match(value: str, candidates: List[str], threshold: float = 0.8) -> Optional[Tuple[str, float]]:
+def fuzzy_match(value: str, candidates: List[str], threshold: float = 0.85) -> Optional[Tuple[str, float]]:
     """
     Find best fuzzy match in OCR text candidates.
     Returns (matched_text, confidence) or None.
+
+    Uses NFC normalization instead of lowercasing to preserve Vietnamese
+    diacritics (e.g. "Hà" vs "Ha" are not equivalent).
     """
     if not value or not candidates:
         return None
 
-    value_lower = value.lower().strip()
+    value_norm = unicodedata.normalize("NFC", value.strip())
     best_match = None
     best_ratio = 0.0
 
     for candidate in candidates:
-        candidate_lower = candidate.lower().strip()
-        # Exact match
-        if value_lower == candidate_lower:
+        candidate_norm = unicodedata.normalize("NFC", candidate.strip())
+        if value_norm == candidate_norm:
             return (candidate, 1.0)
-        # Substring match
-        if value_lower in candidate_lower or candidate_lower in value_lower:
-            ratio = SequenceMatcher(None, value_lower, candidate_lower).ratio()
+        if value_norm in candidate_norm or candidate_norm in value_norm:
+            ratio = SequenceMatcher(None, value_norm, candidate_norm).ratio()
             if ratio > best_ratio:
                 best_ratio = ratio
                 best_match = candidate
@@ -160,21 +162,16 @@ def validate_field_value(field_name: str, value: Any, ocr_texts: List[str]) -> T
     # Convert to string for comparison
     value_str = str(field_value).strip()
 
-    # Date normalization
-    if 'date' in field_name.lower() or 'ngay' in field_name.lower():
-        normalized = normalize_date(value_str)
-        if normalized and normalized != value_str:
-            correction_info = {"type": "date_normalization", "original": value_str, "normalized": normalized}
-            corrected_value = normalized
-
     # ID number validation
-    elif 'id' in field_name.lower() or 'number' in field_name.lower():
+    if 'id' in field_name.lower() or 'number' in field_name.lower():
         if is_vietnamese_id_number(value_str):
-            # Try to match in OCR
-            match = fuzzy_match(value_str, ocr_texts, threshold=0.75)
-            if match and match[1] < 0.95:  # Weak match = possible hallucination
-                corrected_value = match[0]
-                correction_info = {"type": "id_correction", "original": value_str, "ocr_match": match[0], "confidence": match[1]}
+            match = fuzzy_match(value_str, ocr_texts, threshold=0.95)
+            if match:
+                if match[1] < 1.0:
+                    logger.debug(f"ID field '{field_name}': VLM value {value_str!r} has weak OCR match {match[0]!r} ({match[1]:.2f}), keeping VLM value")
+            else:
+                # Value absent from all OCR lines — likely hallucination
+                logger.warning(f"ID field '{field_name}': VLM value {value_str!r} not found in OCR, flagging")
 
     # Tax code validation
     elif 'tax' in field_name.lower() or 'mst' in field_name.lower():
@@ -195,10 +192,14 @@ def validate_field_value(field_name: str, value: Any, ocr_texts: List[str]) -> T
     # Generic fuzzy matching for other fields
     else:
         if len(value_str) > 2:
-            match = fuzzy_match(value_str, ocr_texts, threshold=0.85)
-            if match and match[1] < 0.95:  # Weak match = potential hallucination
-                corrected_value = match[0]
-                correction_info = {"type": "fuzzy_correction", "original": value_str, "ocr_match": match[0], "confidence": match[1]}
+            match = fuzzy_match(value_str, ocr_texts, threshold=0.95)
+            if match and match[1] >= 0.95:
+                # Near-exact OCR match — safe to adopt the OCR spelling
+                if match[0] != value_str:
+                    corrected_value = match[0]
+                    correction_info = {"type": "fuzzy_correction", "original": value_str, "ocr_match": match[0], "confidence": match[1]}
+            elif not match:
+                logger.debug(f"Field '{field_name}': VLM value {value_str!r} not found in OCR")
 
     # Return corrected value in original format
     if isinstance(value, dict) and 'value' in value:

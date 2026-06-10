@@ -78,27 +78,45 @@ def _write_debug_dump(
         logger.warning(f"Failed to write debug dump: {e}")
 
 class VLLMDocumentProcessor:
-    def __init__(self, base_url: str, model_name: str, api_key: str, ocr_engine: Any):
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        api_key: str,
+        ocr_engine: Any,
+        preprocessing_ocr_engine: Any = None,
+        preprocessing_routes: set = None,
+    ):
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
         self.model_name = model_name
         self.ocr_engine = ocr_engine
+        self.preprocessing_ocr_engine = preprocessing_ocr_engine
+        self.preprocessing_routes = preprocessing_routes or set()
         self.http_client = httpx.AsyncClient(timeout=10.0)
         self.ocr_lock = threading.Lock()
+        self.preprocessing_ocr_lock = threading.Lock()
 
     def encode_image_base64(self, image: Image.Image) -> str:
         buffered = io.BytesIO()
         image.save(buffered, format="JPEG")
         return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-    async def run_paddle_ocr_normalized(self, image: Image.Image) -> str:
-        if self.ocr_engine is None:
+    async def run_paddle_ocr_normalized(self, image: Image.Image, route_key: str = "general") -> str:
+        use_preprocessing = (
+            route_key in self.preprocessing_routes
+            and self.preprocessing_ocr_engine is not None
+        )
+        engine = self.preprocessing_ocr_engine if use_preprocessing else self.ocr_engine
+        lock = self.preprocessing_ocr_lock if use_preprocessing else self.ocr_lock
+
+        if engine is None:
             return OCR_UNAVAILABLE_SENTINEL
 
         img_w, img_h = image.size
 
         def _predict(arr: np.ndarray):
-            with self.ocr_lock:
-                return self.ocr_engine.predict(arr)
+            with lock:
+                return engine.predict(arr)
 
         # PaddleOCR's CPU static predictor can raise a generic std::exception on
         # certain input sizes (e.g. exactly 1024x1024 with PP-OCRv5 + textline
@@ -199,7 +217,7 @@ class VLLMDocumentProcessor:
 
             logger.info("Running PaddleOCR...")
             start_ocr = time.time()
-            ocr_context = await self.run_paddle_ocr_normalized(img)
+            ocr_context = await self.run_paddle_ocr_normalized(img, route_key=route_key)
             ocr_duration = time.time() - start_ocr
             OCR_TIME.labels(route=route_key).observe(ocr_duration)
 

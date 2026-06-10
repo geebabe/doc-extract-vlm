@@ -35,3 +35,20 @@ def init_ocr_engine() -> PaddleOCR:
         text_rec_score_thresh=settings.OCR_TEXT_REC_SCORE_THRESH,
     )
     return ocr
+
+
+def init_preprocessing_ocr_engine() -> PaddleOCR:
+    """OCR engine with unwarping + orientation classification for routes that need it (e.g. id_card)."""
+    logger.info("Initializing PaddleOCR preprocessing engine (unwarping+orientation)...")
+    device = get_device()
+
+    ocr = PaddleOCR(
+        lang=settings.OCR_LANG,
+        ocr_version=settings.OCR_VERSION,
+        use_doc_orientation_classify=True,
+        use_doc_unwarping=True,
+        use_textline_orientation=settings.OCR_USE_TEXTLINE_ORIENTATION,
+        device=device,
+        text_rec_score_thresh=settings.OCR_TEXT_REC_SCORE_THRESH,
+    )
+    return ocr

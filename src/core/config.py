@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     OCR_USE_TEXTLINE_ORIENTATION: bool = True
     OCR_TEXT_REC_SCORE_THRESH: float = 0.5
 
+    # Comma-separated route_keys for which PaddleOCR runs with document
+    # unwarping + orientation classification enabled (for angled photos).
+    # Keep empty for invoice/general to avoid CPU segfaults on arbitrary sizes.
+    OCR_ENABLE_PREPROCESSING_ROUTES: str = "id_card"
+
     # Debug: when enabled, write per-request OCR text, prompt, and raw VLM
     # response to DEBUG_DUMP_DIR so failures can be triaged offline.
     DEBUG_DUMP_ENABLED: bool = False
