@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Keep empty for invoice/general to avoid CPU segfaults on arbitrary sizes.
     OCR_ENABLE_PREPROCESSING_ROUTES: str = "id_card"
 
+    OCR_CONCURRENCY: int = 2   # max parallel PaddleOCR (GPU/CPU bound)
+    VLM_CONCURRENCY: int = 4   # max parallel vLLM calls (network bound)
+
     # Debug: when enabled, write per-request OCR text, prompt, and raw VLM
     # response to DEBUG_DUMP_DIR so failures can be triaged offline.
     DEBUG_DUMP_ENABLED: bool = False

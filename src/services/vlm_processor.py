@@ -1,3 +1,4 @@
+import hashlib
 import json
 import base64
 import io
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from openai import AsyncOpenAI
 import httpx
 import asyncio
+from cachetools import TTLCache
 from fastapi import HTTPException
 import time
 from src.core.config import settings
@@ -98,9 +100,15 @@ class VLLMDocumentProcessor:
         self.ocr_engine = ocr_engine
         self.preprocessing_ocr_engine = preprocessing_ocr_engine
         self.preprocessing_routes = preprocessing_routes or set()
-        self.http_client = httpx.AsyncClient(timeout=10.0)
+        self.http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
+        )
         self.ocr_lock = threading.Lock()
         self.preprocessing_ocr_lock = threading.Lock()
+        self._cache: TTLCache = TTLCache(maxsize=100, ttl=300)
+        self._cache_lock = threading.Lock()
+        self._ocr_semaphore = asyncio.Semaphore(settings.OCR_CONCURRENCY)
+        self._vlm_semaphore = asyncio.Semaphore(settings.VLM_CONCURRENCY)
 
     async def close(self) -> None:
         await self.http_client.aclose()
@@ -206,38 +214,62 @@ class VLLMDocumentProcessor:
         ocr_rows = _sort_ocr_reading_order(ocr_rows)
         return "\n".join(json.dumps(row, ensure_ascii=False) for row in ocr_rows)
 
+    _MAX_URL_BYTES = 20 * 1024 * 1024  # 20 MB
+
+    def _cache_key(self, image_bytes: bytes, route_key: str) -> str:
+        return hashlib.sha256(image_bytes).hexdigest()[:16] + ":" + route_key
+
     async def process(
         self,
         image_source: str | bytes,
         schema_class: type[BaseModel],
         route_key: str = "general",
-    ) -> Optional[dict]:
+    ) -> tuple[Optional[dict], bool]:
+        # Resolve to raw bytes so we can compute a cache key regardless of source.
+        image_bytes: Optional[bytes] = None
         img = None
         try:
             if isinstance(image_source, bytes):
-                img = Image.open(io.BytesIO(image_source))
+                image_bytes = image_source
+                img = Image.open(io.BytesIO(image_bytes))
                 img = img.convert("RGB")
             elif image_source.startswith("http"):
                 response = await self.http_client.get(image_source)
                 response.raise_for_status()
-                img = Image.open(io.BytesIO(response.content))
+                content_length = int(response.headers.get("content-length", 0))
+                if content_length > self._MAX_URL_BYTES:
+                    raise HTTPException(status_code=400, detail=f"Image exceeds 20 MB limit.")
+                image_bytes = response.content
+                if len(image_bytes) > self._MAX_URL_BYTES:
+                    raise HTTPException(status_code=400, detail=f"Image exceeds 20 MB limit.")
+                img = Image.open(io.BytesIO(image_bytes))
                 img = img.convert("RGB")
             else:
-                img = await asyncio.to_thread(Image.open, image_source)
+                image_bytes = await asyncio.to_thread(lambda: open(image_source, "rb").read())
+                img = Image.open(io.BytesIO(image_bytes))
                 img = img.convert("RGB")
 
             # Preprocess image
             img = preprocess_image(img)
 
+            # Cache check — must happen after image bytes are available.
+            cache_key = self._cache_key(image_bytes, route_key)
+            with self._cache_lock:
+                cached = self._cache.get(cache_key)
+            if cached is not None:
+                logger.info("Cache hit — skipping OCR + VLM.")
+                return cached, True
+
             logger.info("Running PaddleOCR...")
             start_ocr = time.time()
-            ocr_context = await self.run_paddle_ocr_normalized(img, route_key=route_key)
+            async with self._ocr_semaphore:
+                ocr_context = await self.run_paddle_ocr_normalized(img, route_key=route_key)
             ocr_duration = time.time() - start_ocr
             OCR_TIME.labels(route=route_key).observe(ocr_duration)
 
             system_prompt = build_system_prompt(route_key, ocr_context)
             user_prompt = get_user_prompt(route_key)
-            
+
             logger.info(f"Calling VLLM ({self.model_name})...")
             image_b64 = await asyncio.to_thread(self.encode_image_base64, img)
         except UnidentifiedImageError as e:
@@ -254,7 +286,7 @@ class VLLMDocumentProcessor:
         finally:
             if img:
                 img.close()
-        
+
         raw_response_text: Optional[str] = None
         extraction_dict: Optional[dict] = None
         try:
@@ -262,27 +294,28 @@ class VLLMDocumentProcessor:
             start_vlm = time.time()
             combined_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-            response = await self.client.beta.chat.completions.parse(
-                model=self.model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
-                            },
-                            {
-                                "type": "text",
-                                "text": combined_prompt
-                            }
-                        ]
-                    }
-                ],
-                response_format=schema_class,
-                temperature=0.0,
-                max_completion_tokens=4096,
-            )
+            async with self._vlm_semaphore:
+                response = await self.client.beta.chat.completions.parse(
+                    model=self.model_name,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
+                                },
+                                {
+                                    "type": "text",
+                                    "text": combined_prompt
+                                }
+                            ]
+                        }
+                    ],
+                    response_format=schema_class,
+                    temperature=0.0,
+                    max_completion_tokens=4096,
+                )
             vlm_duration = time.time() - start_vlm
             VLM_TIME.labels(route=route_key).observe(vlm_duration)
 
@@ -329,7 +362,9 @@ class VLLMDocumentProcessor:
                     raw_response=raw_response_text, parsed=corrected_extraction,
                 )
 
-            return corrected_extraction
+            with self._cache_lock:
+                self._cache[cache_key] = corrected_extraction
+            return corrected_extraction, False
 
         except Exception as e:
             logger.error(f"Error during VLLM parse: {e}")
