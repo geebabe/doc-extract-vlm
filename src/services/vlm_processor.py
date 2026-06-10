@@ -102,6 +102,10 @@ class VLLMDocumentProcessor:
         self.ocr_lock = threading.Lock()
         self.preprocessing_ocr_lock = threading.Lock()
 
+    async def close(self) -> None:
+        await self.http_client.aclose()
+        await self.client.close()
+
     def encode_image_base64(self, image: Image.Image) -> str:
         buffered = io.BytesIO()
         image.save(buffered, format="JPEG")
@@ -204,13 +208,16 @@ class VLLMDocumentProcessor:
 
     async def process(
         self,
-        image_source: str,
+        image_source: str | bytes,
         schema_class: type[BaseModel],
         route_key: str = "general",
     ) -> Optional[dict]:
         img = None
         try:
-            if image_source.startswith("http"):
+            if isinstance(image_source, bytes):
+                img = Image.open(io.BytesIO(image_source))
+                img = img.convert("RGB")
+            elif image_source.startswith("http"):
                 response = await self.http_client.get(image_source)
                 response.raise_for_status()
                 img = Image.open(io.BytesIO(response.content))

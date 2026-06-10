@@ -1,6 +1,3 @@
-import os
-import shutil
-import uuid
 import asyncio
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from pydantic import BaseModel
@@ -20,28 +17,15 @@ router = APIRouter()
 CONCURRENCY_LIMITER = asyncio.Semaphore(4)
 
 async def _process_file(file: UploadFile, processor: VLLMDocumentProcessor, schema_class: Type[BaseModel], route_key: str = "general"):
-    safe_filename = os.path.basename(file.filename)
-    temp_filename = f"temp_{uuid.uuid4()}_{safe_filename}"
-
     try:
-        # Offload blocking file writing to a thread
-        def write_file():
-            with open(temp_filename, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-
-        await asyncio.to_thread(write_file)
-
+        data = await file.read()
         logger.info(f"Processing uploaded file: {file.filename} with schema {schema_class.__name__}")
-        result = await processor.process(temp_filename, schema_class, route_key)
+        result = await processor.process(data, schema_class, route_key)
         if result is None:
             raise HTTPException(status_code=500, detail="Extraction failed")
         return result
     finally:
-        # Release uploaded file resources
         await file.close()
-        # Offload file removal to thread to keep event loop non-blocking
-        if os.path.exists(temp_filename):
-            await asyncio.to_thread(os.remove, temp_filename)
 
 async def _process_url(request: ExtractURLRequest, processor: VLLMDocumentProcessor, schema_class: Type[BaseModel], route_key: str = "general"):
     logger.info(f"Processing URL: {request.url} with schema {schema_class.__name__}")
