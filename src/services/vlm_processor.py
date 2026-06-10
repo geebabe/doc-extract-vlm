@@ -28,6 +28,12 @@ from src.core.metrics import OCR_TIME, VLM_TIME, TOTAL_TIME, CORRECTION_COUNT
 OCR_UNAVAILABLE_SENTINEL = "OCR_UNAVAILABLE"
 OCR_EMPTY_SENTINEL = "OCR_EMPTY"
 
+_ROW_TOLERANCE = 15  # normalized units (~1.5% of height) to group same-row elements
+
+
+def _sort_ocr_reading_order(rows: list[dict]) -> list[dict]:
+    return sorted(rows, key=lambda r: (r["b"][1] // _ROW_TOLERANCE, r["b"][0]))
+
 
 def _safe_stem(image_source: str) -> str:
     base = os.path.basename(image_source) or "request"
@@ -170,7 +176,7 @@ class VLLMDocumentProcessor:
 
         ocr_rows = []
         page = results[0]
-        
+
         if isinstance(page, dict):
             texts = page.get("rec_texts", [])
             boxes = page.get("rec_boxes", [])
@@ -180,10 +186,10 @@ class VLLMDocumentProcessor:
                 ymin = int(max(0, min(1000, (box[1] / img_h) * 1000)))
                 xmax = int(max(0, min(1000, (box[2] / img_w) * 1000)))
                 ymax = int(max(0, min(1000, (box[3] / img_h) * 1000)))
-                ocr_rows.append(json.dumps({"t": text, "b": [xmin, ymin, xmax, ymax]}, ensure_ascii=False))
+                ocr_rows.append({"t": text, "b": [xmin, ymin, xmax, ymax]})
         else:
             for line in page:
-                box = line[0] 
+                box = line[0]
                 text, _ = line[1]
                 xs = [p[0] for p in box]
                 ys = [p[1] for p in box]
@@ -191,9 +197,10 @@ class VLLMDocumentProcessor:
                 ymin = int(max(0, min(1000, (min(ys) / img_h) * 1000)))
                 xmax = int(max(0, min(1000, (max(xs) / img_w) * 1000)))
                 ymax = int(max(0, min(1000, (max(ys) / img_h) * 1000)))
-                ocr_rows.append(json.dumps({"t": text, "b": [xmin, ymin, xmax, ymax]}, ensure_ascii=False))
+                ocr_rows.append({"t": text, "b": [xmin, ymin, xmax, ymax]})
 
-        return "\n".join(ocr_rows)
+        ocr_rows = _sort_ocr_reading_order(ocr_rows)
+        return "\n".join(json.dumps(row, ensure_ascii=False) for row in ocr_rows)
 
     async def process(
         self,
