@@ -4,7 +4,11 @@ Supports invoice, ID card, and general document routes with shared rules and rou
 """
 
 import json
+import textwrap
 from dataclasses import dataclass
+from typing import get_args, get_origin
+from pydantic import BaseModel
+from pydantic.fields import FieldInfo
 
 
 SHARED_RULES = """\
@@ -32,68 +36,18 @@ SHARED_RULES = """\
    No markdown, no conversational fillers, and no explanations."""
 
 
-INVOICE_FIELD_DEFS = """\
-=== SCHEMA FIELD DEFINITIONS ===
+# ── hard-rules blocks kept here because they are logic, not field descriptions ──
 
-- invoice_number        : The unique identifier of this invoice (e.g. "0001234", "INV-2024-001").
-                          Often labelled: "Số hóa đơn", "Số:", "Invoice No.", "No.".
-- invoice_date          : The date the invoice was issued.
-                          Often labelled: "Ngày", "Date", "Ngày lập", "Ngày phát hành".
-                          Preserve exact formatting from the invoice (e.g. "15/03/2024", "March 15, 2024").
-- vendor.name           : Full legal name of the issuing company/vendor.
-                          Often labelled: "Đơn vị bán hàng", "Công ty", "Seller", "Vendor".
-- vendor.address        : Full address of the vendor.
-                          Often labelled: "Địa chỉ:", "Address:". Include street, district, city.
-- vendor.tax_code       : Tax identification number of the vendor.
-                          Often labelled: "Mã số thuế:", "MST:", "Tax Code:", "Tax ID:".
-                          Typically a 10 or 13-digit number.
-- vendor.phone          : Phone or fax number of the vendor.
-                          Often labelled: "Điện thoại:", "ĐT:", "Tel:", "Phone:".
-- items                 : List of line items in the invoice. Each item has:
-    - description       : Name or description of the product/service.
-                          Often in the "Tên hàng hóa, dịch vụ", "Description", "Diễn giải" column.
-    - quantity          : Number of units. Often in the "Số lượng", "Qty", "SL" column.
-                          Preserve exact value (e.g. "2", "1.5").
-    - unit_price        : Price per unit. Often in the "Đơn giá", "Unit Price" column.
-                          Preserve exact numeric formatting.
-    - total_amount      : Line total for this item (quantity × unit_price).
-                          Often in the "Thành tiền", "Amount", "Tổng" column.
-                          Preserve exact numeric formatting.
-- total_amount          : Final invoice amount due including all taxes and fees.
-                          Often labelled: "Tổng cộng", "Total", "Số tiền thanh toán",
-                          "Tổng tiền thanh toán", "Amount Due".
-                          Preserve exact numeric formatting.
-- currency              : Currency code or symbol used in the invoice (e.g. "VND", "USD", "đ").
-                          If no explicit currency is stated, output null.
-
+_INVOICE_SPECIAL_RULES = """\
 SPECIAL RULES FOR ITEMS LIST: Extract ALL line items from the invoice table. If there are no items,
 output an empty list []. Each item must have at minimum a "description". Set missing sub-fields to
 {"value": null, "bounding_box": null}. Do not merge rows — one object per invoice line item."""
 
-
-CCCD_FRONT_FIELD_DEFS = """\
+_CCCD_FRONT_CONTEXT = """\
 === THIS IS THE FRONT SIDE OF A VIETNAMESE CCCD CARD ===
 
 Extract every field that is readable from this front-side image. Fields that are
 only on the back side (issue_date, issue_place) should be set to null.
-
-=== SCHEMA FIELD DEFINITIONS ===
-
-- id_number             : ID number (Số căn cước công dân / Số/No.) printed near
-                          the top or below the portrait. Extract the exact digits.
-- full_name             : Full name (Họ và tên / Full name). Printed in plain text.
-- date_of_birth         : Date of birth (Ngày sinh / Date of birth).
-                          Preserve exact format (e.g. "01/01/1990").
-- gender                : Gender (Giới tính / Sex). Values: "Nam" or "Nữ".
-- nationality           : Nationality (Quốc tịch / Nationality). Usually "Việt Nam".
-- place_of_origin       : Place of origin (Quê quán / Place of origin).
-- place_of_residence    : Place of residence (Nơi thường trú / Place of residence).
-                          May span multiple lines — concatenate with a single space.
-- expiry_date           : Expiry date (Có giá trị đến / Date of expiry).
-                          Printed on newer cards on the front.
-
-- issue_date            : Set to {"value": null, "bounding_box": null} — back side only.
-- issue_place           : Set to {"value": null, "bounding_box": null} — back side only.
 
 === HARD RULES ===
 
@@ -101,8 +55,7 @@ only on the back side (issue_date, issue_place) should be set to null.
 2. Do NOT null out a field that is visually readable or appears in the OCR hints.
 3. issue_date and issue_place are always null for front-side images."""
 
-
-CCCD_BACK_FIELD_DEFS = """\
+_CCCD_BACK_CONTEXT = """\
 === THIS IS THE BACK SIDE OF A VIETNAMESE CCCD CARD ===
 
 The back side typically contains: MRZ lines, fingerprint area, issue date/place,
@@ -110,38 +63,85 @@ and sometimes place_of_residence. Extract every field visible. The MRZ is the
 primary source for id_number, date_of_birth, gender, expiry_date, nationality,
 and full_name when printed text is unclear.
 
-=== SCHEMA FIELD DEFINITIONS ===
-
-- id_number             : Digits from the MRZ line starting with "IDVNM"
-                          (positions 6–17 after the prefix). Also compare to any
-                          printed "Số:" label on the card.
-- full_name             : Decoded from the MRZ name section (after "<<").
-                          Replace "<" with spaces; restore obvious Vietnamese
-                          diacritics (e.g. "PHAM<<THI<NHAT<LE" → "PHẠM THỊ NHẬT LỆ").
-                          If printed plain text for full_name is visible, prefer that.
-- date_of_birth         : Encoded as YYMMDD in the MRZ (e.g. "900101" → "01/01/1990").
-                          If printed text is visible, prefer that.
-- gender                : M → "Nam", F → "Nữ" (from MRZ). If printed text visible, prefer that.
-- nationality           : "VNM" in MRZ → "Việt Nam".
-- expiry_date           : Encoded as YYMMDD in the MRZ second line (e.g. "350101" → "01/01/2035").
-                          Also may be printed as "Có giá trị đến: DD/MM/YYYY".
-- issue_date            : Date of issue (Ngày, tháng, năm / Date of issue).
-                          Printed near the issuing officer's signature.
-- issue_place           : Place of issue (Nơi cấp). Often
-                          "CỤC TRƯỞNG CỤC CẢNH SÁT QUẢN LÝ HÀNH CHÍNH VỀ TRẬT TỰ XÃ HỘI"
-                          or "BỘ CÔNG AN".
-- place_of_residence    : Printed residence address on the back (older CCCD generation).
-                          If not visible on this back side, set to null.
-
-- place_of_origin       : Set to {"value": null, "bounding_box": null} — front side only.
-
 === HARD RULES ===
 
 1. The MRZ is machine-readable ground truth — always decode it for id_number,
    date_of_birth, gender, expiry_date, nationality, and full_name.
 2. For fields where both MRZ and printed text are visible, prefer the printed text.
 3. place_of_origin is always null for back-side images.
-4. Never return ALL fields as null if MRZ lines are visible."""
+4. Never return ALL fields as null if MRZ lines are visible.
+
+=== MRZ DECODING NOTES ===
+
+- id_number   : digits from the MRZ line starting with "IDVNM" (positions 6–17 after the prefix).
+- full_name   : decoded from the MRZ name section (after "<<"). Replace "<" with spaces; restore
+                obvious Vietnamese diacritics (e.g. "PHAM<<THI<NHAT<LE" → "PHẠM THỊ NHẬT LỆ").
+                If printed plain text for full_name is visible, prefer that.
+- date_of_birth: encoded as YYMMDD (e.g. "900101" → "01/01/1990").
+- gender      : M → "Nam", F → "Nữ". If printed text visible, prefer that.
+- nationality : "VNM" → "Việt Nam".
+- expiry_date : encoded as YYMMDD in the MRZ second line (e.g. "350101" → "01/01/2035").
+                Also may be printed as "Có giá trị đến: DD/MM/YYYY"."""
+
+_GENERAL_SPECIAL_RULES = """\
+SPECIAL RULES FOR ADDITIONAL_FIELDS: Extract any important information not covered by the standard fields.
+If there are no additional fields, output an empty list []."""
+
+
+def generate_field_definitions(schema_class: type[BaseModel], _prefix: str = "", _indent: int = 0) -> str:
+    """
+    Build a FIELD_DEFINITIONS block by reflecting on a Pydantic schema.
+
+    - Top-level BBoxField leaves: one bullet per field using Field(description=...).
+    - Nested BaseModel (non-BBoxField): recurse with dot-prefix notation.
+    - List[BaseModel]: show the sub-field indented with a sub-bullet.
+    - List[BBoxField] / List[str]: single bullet noting it's a list.
+    """
+    from src.schemas.base import BBoxField  # local import avoids circular deps at module load
+
+    lines: list[str] = []
+    indent = "    " * _indent
+    sub_indent = "    " * (_indent + 1)
+
+    for field_name, field_info in schema_class.model_fields.items():
+        full_name = f"{_prefix}{field_name}" if _prefix else field_name
+        description = field_info.description or ""
+        annotation = field_info.annotation
+
+        # Unwrap Optional[X] → X
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+        if origin is type(None):
+            continue
+        # Optional[X] comes through as Union[X, None]
+        import types
+        if origin is types.UnionType or str(origin) == "typing.Union":
+            non_none = [a for a in args if a is not type(None)]
+            if non_none:
+                annotation = non_none[0]
+                origin = get_origin(annotation)
+                args = get_args(annotation)
+
+        is_list = origin is list
+        inner_type = args[0] if (is_list and args) else None
+
+        if is_list and inner_type and isinstance(inner_type, type) and issubclass(inner_type, BaseModel) and inner_type is not BBoxField:
+            # e.g. items: List[InvoiceItem]
+            lines.append(f"{indent}- {full_name:<22}: {description}")
+            sub_lines = generate_field_definitions(inner_type, _prefix=f"{full_name}[].", _indent=_indent + 1)
+            if sub_lines:
+                lines.append(sub_lines)
+        elif isinstance(annotation, type) and issubclass(annotation, BaseModel) and annotation is not BBoxField:
+            # e.g. vendor: VendorInfo
+            lines.append(f"{indent}- {full_name:<22}: {description}")
+            sub_lines = generate_field_definitions(annotation, _prefix=f"{full_name}.", _indent=_indent + 1)
+            if sub_lines:
+                lines.append(sub_lines)
+        else:
+            # Leaf field (BBoxField, str, Optional[str], List[BBoxField], …)
+            lines.append(f"{indent}- {full_name:<22}: {description}")
+
+    return "\n".join(lines)
 
 
 def detect_cccd_side(ocr_context: str) -> str:
@@ -168,26 +168,12 @@ def detect_cccd_side(ocr_context: str) -> str:
     return "unknown"
 
 
-GENERAL_FIELD_DEFS = """\
-=== SCHEMA FIELD DEFINITIONS ===
-
-- title                 : Document title or heading.
-                          Often found at the top of the document.
-- document_number       : Document reference number or ID (e.g., report number, case ID, serial number).
-                          Often labelled: "Number", "Reference", "ID", "Số hiệu", "Mã số".
-- date                  : Document date or issue date.
-                          Often labelled: "Date", "Issued", "Ngày", "Ngày lập".
-- issuer                : Organization, person, or entity that issued or authored the document.
-                          Often labelled: "Issued by", "From", "Author", "Cơ quan cấp".
-- recipients            : List of recipients or intended parties (one entry per recipient).
-                          Often labelled: "To", "Recipient", "Gửi tới", "Người nhận".
-- summary               : Brief summary, abstract, or main content of the document.
-- additional_fields     : List of key-value pairs for any other specific data points found in the document.
-                          Each entry has a "key" (field name) and "value" (extracted data).
-- full_text             : Optional: complete raw text of the document if desired for further processing.
-
-SPECIAL RULES FOR ADDITIONAL_FIELDS: Extract any important information not covered by the standard fields.
-If there are no additional fields, output an empty list []."""
+def _build_field_defs_block(schema_class: type[BaseModel], extra_rules: str = "") -> str:
+    body = generate_field_definitions(schema_class)
+    block = f"=== SCHEMA FIELD DEFINITIONS ===\n\n{body}"
+    if extra_rules:
+        block += f"\n\n{extra_rules}"
+    return block
 
 
 @dataclass
@@ -198,28 +184,37 @@ class PromptConfig:
     user_prompt: str
 
 
-PROMPT_CONFIGS = {
-    "invoice": PromptConfig(
-        role_description="You are a strict invoice data extraction engine used to build structured datasets.\nYour output will be used to extract critical business information, so accuracy is essential.",
-        field_definitions=INVOICE_FIELD_DEFS,
-        user_prompt="Extract structured invoice data from this image following the schema and rules above.",
-    ),
-    "id_card_front": PromptConfig(
-        role_description="You are a strict Vietnamese CCCD (Căn Cước Công Dân) ID card data extraction engine.\nYour output will be used to extract identity information with high precision, so accuracy is critical.",
-        field_definitions=CCCD_FRONT_FIELD_DEFS,
-        user_prompt="Extract structured CCCD card data from this FRONT-SIDE image following the schema and rules above.",
-    ),
-    "id_card_back": PromptConfig(
-        role_description="You are a strict Vietnamese CCCD (Căn Cước Công Dân) ID card data extraction engine.\nYour output will be used to extract identity information with high precision, so accuracy is critical.",
-        field_definitions=CCCD_BACK_FIELD_DEFS,
-        user_prompt="Extract structured CCCD card data from this BACK-SIDE image. Decode the MRZ lines if present.",
-    ),
-    "general": PromptConfig(
-        role_description="You are an advanced document understanding system. Your goal is to extract structured information from the provided document image with high precision.",
-        field_definitions=GENERAL_FIELD_DEFS,
-        user_prompt="Analyze the attached document and perform structured extraction according to the schema.",
-    ),
-}
+def _make_prompt_configs() -> dict[str, "PromptConfig"]:
+    from src.schemas.invoice import InvoiceExtraction
+    from src.schemas.id_card import IDCardExtraction
+    from src.schemas.general import GeneralDocumentExtraction
+
+    return {
+        "invoice": PromptConfig(
+            role_description="You are a strict invoice data extraction engine used to build structured datasets.\nYour output will be used to extract critical business information, so accuracy is essential.",
+            field_definitions=_build_field_defs_block(InvoiceExtraction, _INVOICE_SPECIAL_RULES),
+            user_prompt="Extract structured invoice data from this image following the schema and rules above.",
+        ),
+        "id_card_front": PromptConfig(
+            role_description="You are a strict Vietnamese CCCD (Căn Cước Công Dân) ID card data extraction engine.\nYour output will be used to extract identity information with high precision, so accuracy is critical.",
+            field_definitions=f"{_CCCD_FRONT_CONTEXT}\n\n{_build_field_defs_block(IDCardExtraction)}",
+            user_prompt="Extract structured CCCD card data from this FRONT-SIDE image following the schema and rules above.",
+        ),
+        "id_card_back": PromptConfig(
+            role_description="You are a strict Vietnamese CCCD (Căn Cước Công Dân) ID card data extraction engine.\nYour output will be used to extract identity information with high precision, so accuracy is critical.",
+            field_definitions=f"{_CCCD_BACK_CONTEXT}\n\n{_build_field_defs_block(IDCardExtraction)}",
+            user_prompt="Extract structured CCCD card data from this BACK-SIDE image. Decode the MRZ lines if present.",
+        ),
+        "general": PromptConfig(
+            role_description="You are an advanced document understanding system. Your goal is to extract structured information from the provided document image with high precision.",
+            field_definitions=_build_field_defs_block(GeneralDocumentExtraction, _GENERAL_SPECIAL_RULES),
+            user_prompt="Analyze the attached document and perform structured extraction according to the schema.",
+        ),
+    }
+
+
+# Built once at import time; adding a new doc type only requires a schema + entry here.
+PROMPT_CONFIGS: dict[str, PromptConfig] = _make_prompt_configs()
 # Alias: "id_card" resolves to front by default; build_system_prompt overrides
 # this at runtime based on OCR-detected card side.
 PROMPT_CONFIGS["id_card"] = PROMPT_CONFIGS["id_card_front"]
