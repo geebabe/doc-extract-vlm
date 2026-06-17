@@ -186,7 +186,7 @@ class PromptConfig:
 
 def _make_prompt_configs() -> dict[str, "PromptConfig"]:
     from src.schemas.invoice import InvoiceExtraction
-    from src.schemas.id_card import IDCardExtraction
+    from src.schemas.id_card import IDCardFront, IDCardBack
     from src.schemas.general import GeneralDocumentExtraction
 
     return {
@@ -197,12 +197,12 @@ def _make_prompt_configs() -> dict[str, "PromptConfig"]:
         ),
         "id_card_front": PromptConfig(
             role_description="You are a strict Vietnamese CCCD (Căn Cước Công Dân) ID card data extraction engine.\nYour output will be used to extract identity information with high precision, so accuracy is critical.",
-            field_definitions=f"{_CCCD_FRONT_CONTEXT}\n\n{_build_field_defs_block(IDCardExtraction)}",
+            field_definitions=f"{_CCCD_FRONT_CONTEXT}\n\n{_build_field_defs_block(IDCardFront)}",
             user_prompt="Extract structured CCCD card data from this FRONT-SIDE image following the schema and rules above.",
         ),
         "id_card_back": PromptConfig(
             role_description="You are a strict Vietnamese CCCD (Căn Cước Công Dân) ID card data extraction engine.\nYour output will be used to extract identity information with high precision, so accuracy is critical.",
-            field_definitions=f"{_CCCD_BACK_CONTEXT}\n\n{_build_field_defs_block(IDCardExtraction)}",
+            field_definitions=f"{_CCCD_BACK_CONTEXT}\n\n{_build_field_defs_block(IDCardBack)}",
             user_prompt="Extract structured CCCD card data from this BACK-SIDE image. Decode the MRZ lines if present.",
         ),
         "general": PromptConfig(

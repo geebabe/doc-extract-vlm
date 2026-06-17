@@ -267,6 +267,18 @@ class VLLMDocumentProcessor:
             ocr_duration = time.time() - start_ocr
             OCR_TIME.labels(route=route_key).observe(ocr_duration)
 
+            # For id_card, pick the specialized VLM schema based on the detected side
+            # so guided decoding only includes fields that exist on that side.
+            if route_key == "id_card":
+                from src.services.prompt_builder import detect_cccd_side, OCR_UNAVAILABLE_SENTINELS
+                from src.schemas.id_card import IDCardFront, IDCardBack
+                ocr_failed = (ocr_context or "").strip() in OCR_UNAVAILABLE_SENTINELS
+                if not ocr_failed:
+                    side = detect_cccd_side(ocr_context)
+                    schema_class = IDCardBack if side == "back" else IDCardFront
+                else:
+                    schema_class = IDCardFront
+
             system_prompt = build_system_prompt(route_key, ocr_context)
             user_prompt = get_user_prompt(route_key)
 
